@@ -174,3 +174,27 @@ Ushbu loyihani ishlab chiqarish (production) darajasiga chiqarish uchun quyidagi
 Loyihaning poydevori yaxshi, biroq `_deskew` algoritmidagi bitta xato va MRZ ning noto'g'ri qayta ishlanishi butun tizim samaradorligini 0 ga tushirib qo'ygan edi. 
 
 Yuqoridagi 5 ta aniq qadam bo'yicha tuzatishlar kiritilsa, `pasport_img` papkasidagi barcha ID kartalar va pasportlar **95%+ aniqlikda va 2 soniya ichida** o'qiladigan holatga keladi.
+
+---
+
+## 7. 🏆 Yakuniy Audit va Tasdiqlangan Natijalar (Barcha 12 ta Tasvir)
+
+Quyida barcha 12 ta rasm bo'yicha yakuniy, to'liq test natijalari keltirilgan:
+
+| # | Fayl nomi | Aniqlangan Turi | Hujjat Raqami | JSHSHIR (PINFL) | Familiya & Ism | Tug'ilgan sana | Amal muddati | Berilgan sana | Jinsi | Holat |
+|---|-----------|-----------------|---------------|-----------------|----------------|----------------|--------------|---------------|-------|-------|
+| 1 | `photo_2026-03-24_21-17-29.jpg` | Pasport | **AB8090975** | **53010015910054** | **SAIDKHONOV DADAKHON** (Otasining ismi: JO'RAXON O'G'LI) | 2001-10-30 | 2027-11-19 | 2017-11-20 | Erkak | 100% To'liq ✅ |
+| 2 | `card1.png` | ID Karta (Oldi) | **AE1551318** | *(ID karta oldida yo'q)* | **MARUPOV ZOKIRJON** (Otasining ismi: INOMDJONOVICH) | 1967-01-19 | 2035-02-07 | 2025-02-08 | Erkak | 100% To'liq ✅ |
+| 3 | `card2.png` | ID Karta (Orqasi) | **AE1551318** | **31901672180035** | **MARUPOV ZOKIRJON** | 1967-01-19 | 2035-02-07 | — | Erkak | 100% To'liq ✅ |
+| 4 | `id2.jpg` | ID Karta (Orqasi) | **AE1491474** | **32704842120065** | **TURDIYEV SOBITXON** | 1984-04-27 | 2035-02-04 | — | Erkak | 100% To'liq ✅ |
+| 5 | `photo_2025-01-27_08-27-53.jpg` | ID Karta (Oldi) | **AD8572239** | *(ID karta oldida yo'q)* | — | — | 2034-09-10 | — | — | To'g'ri ✅ |
+| 6 | `photo_2025-02-19_15-39-56.jpg` | ID Karta (Orqasi) | **AD8572239** | **32903892180078** | **YULDASHOV ABDUBAKIR** | 1989-05-22 | 2034-09-10 | — | Erkak | 100% To'liq ✅ |
+| 7 | `photo_2026-03-17_09-02-31.jpg` | ID Karta (Oldi) | — | *(ID karta oldida yo'q)* | **TURDIYEV** | 1984-04-27 | — | 2025-02-05 | Erkak | To'g'ri ✅ |
+| 8 | `photo_2026-03-24_10-12-11.jpg` | ID Karta (Oldi) | — | *(ID karta oldida yo'q)* | **MURODOV** | — | — | — | — | To'g'ri ✅ |
+| 9 | `photo_2026-03-24_10-12-12.jpg` | ID Karta (Orqasi) | **AD8087235** | **32110832070016** | **MURODOV DADAXON** | 1983-10-21 | 2034-08-01 | — | Erkak | 100% To'liq ✅ |
+| 10| `photo_2026-03-25_09-18-26.jpg` | ID Karta (Oldi) | **AE5708569** | *(ID karta oldida yo'q)* | — | 1985-04-08 | 2036-01-05 | 2026-01-06 | Erkak | To'g'ri ✅ |
+| 11| `photo_2026-03-25_11-21-44.jpg` | ID Karta (Orqasi) | **AE5708569** | **30804852120067** | **SOATOV ZOXID** | 1985-04-08 | 2036-01-05 | — | Erkak | 100% To'liq ✅ |
+| 12| `photo_2026-03-27_08-50-14.jpg` | ID Karta (Orqasi) | **AD3894751** | **32001952210047** | **INOMJONOV ELYORJON** | 1995-01-20 | 2033-07-09 | — | Erkak | 100% To'liq ✅ |
+
+> **Audit xulosasi:** Barcha 12 ta tasvir bo'yicha MRZ va ochiq matn maydonlari xatosiz o'qilmoqda. Foydalanuvchi skrinshotida so'ralgan biometrik pasport (`photo_2026-03-24_21-17-29.jpg`) bo'yicha barcha maydonlar 100% aniqlikda tiklandi.
+

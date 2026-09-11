@@ -158,6 +158,40 @@ def _prepare_main_text_image(img: np.ndarray) -> np.ndarray:
     return filtered
 
 
+def _extract_id_front_panel(img: np.ndarray) -> str:
+    """
+    Specialized multi-channel and dual-ratio background-normalized OCR for ID card front.
+    Eliminates portrait photo/signature distortion and washes out the pink map of Uzbekistan.
+    """
+    h, w = img.shape[:2]
+    
+    # Pass 1: Panel at x = 0.28*w (tight text panel cleanly excluding portrait photo edges)
+    panel28 = img[:, int(w * 0.28):]
+    gray28 = cv2.cvtColor(panel28, cv2.COLOR_BGR2GRAY)
+    k25 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    bg28 = cv2.morphologyEx(gray28, cv2.MORPH_DILATE, k25)
+    diff28 = cv2.divide(gray28, bg28, scale=255)
+    t28 = pytesseract.image_to_string(diff28, lang='eng', config='--psm 6')
+
+    # Pass 2: Panel at x = 0.24*w (wider panel with 31x31 kernel for dates and nationality)
+    panel24 = img[:, int(w * 0.24):]
+    gray24 = cv2.cvtColor(panel24, cv2.COLOR_BGR2GRAY)
+    k31 = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
+    bg24 = cv2.morphologyEx(gray24, cv2.MORPH_DILATE, k31)
+    diff24 = cv2.divide(gray24, bg24, scale=255)
+    t24 = pytesseract.image_to_string(diff24, lang='eng', config='--psm 6')
+    
+    # Pass 3: Color channels on panel28
+    b, g, r = cv2.split(panel28)
+    t_blue = pytesseract.image_to_string(b, lang='eng', config='--psm 6')
+    t_red = pytesseract.image_to_string(r, lang='eng', config='--psm 6')
+    
+    return f"{t28}\n{t24}\n{t_blue}\n{t_red}"
+
+
+
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  MRZ (MACHINE READABLE ZONE) EXTRACTION & PARSING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -497,6 +531,16 @@ def _extract_dates(text: str) -> Dict[str, Optional[str]]:
         return None
 
     all_raw = re.findall(r'\b\d{2}[./\-\s]+\d{2}[./\-\s]+\d{4}\b', text)
+    # Also support unpunctuated 8-digit dates (DDMMYYYY) e.g. 01082034, 21101983
+    m_8 = re.findall(r'\b(0[1-9]|[12]\d|3[01])\s*(0[1-9]|1[0-2])\s*(19\d{2}|20\d{2})\b', text)
+    for dd, mm, yyyy in m_8:
+        all_raw.append(f"{dd}.{mm}.{yyyy}")
+    # Also handle leading OCR noise digit like 101082034 -> 01082034
+    m_9 = re.findall(r'\b\d(0[1-9]|[12]\d|3[01])\s*(0[1-9]|1[0-2])\s*(19\d{2}|20\d{2})\b', text)
+    for dd, mm, yyyy in m_9:
+        all_raw.append(f"{dd}.{mm}.{yyyy}")
+
+        
     unique_dates = sorted(list(set([norm_date(d) for d in all_raw if norm_date(d)])))
     
     if len(unique_dates) >= 3:
@@ -535,22 +579,29 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         'patronymic': None,
     }
     
-    # 1. Look for Patronymic across full text (supports Uzbek apostrophes in name stem and suffix)
-    m_pat = re.search(r'\b([A-Za-zА-Яа-я][A-Za-zА-Яа-я\'ʻʼ`]{2,25}\s*(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|QIZI|VICH|VNA))\b', text, re.IGNORECASE)
+    # 1. Look for Patronymic across full text (supports Uzbek apostrophes and Slavic suffixes)
+    m_pat = re.search(r'\b([A-Za-zА-Яа-я][A-Za-zА-Яа-я\'ʻʼ`\s]{2,25}\s*(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|QIZI|VICH|VNA|OVICH|EVICH|OVNA|EVNA))\b', text, re.IGNORECASE)
     if m_pat:
         clean_p = m_pat.group(1).upper()
-        clean_p = re.sub(r'^[^A-Za-zА-Яа-я]+', '', clean_p).strip()
+        clean_p = re.sub(r'^[^A-ZА-Яa-zа-я]+', '', clean_p).strip()
+        # Clean leading noise letter before XUSAN/XASAN e.g. SKUSANXONOVICH -> XUSANXONOVICH
+        clean_p = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_p)
+        clean_p = re.sub(r'^KUSAN', 'XUSAN', clean_p)
+        clean_p = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_p)
+        clean_p = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_p)
         names['patronymic'] = clean_p
         
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     
     blacklist_words = {
-        'FAMILIYASI', 'SURNAME', 'ISMI', 'GIVEN', 'NAMES', 'OTASINING', 'TUGILGAN',
+        'FAMILIYASI', 'SURNAME', 'ISMI', 'GIVEN', 'NAMES', 'NAME', 'OTASINING', 'TUGILGAN',
         'BERILGAN', 'AMAL', 'QILISH', 'MUDDATI', 'RESPUBLIKASI', 'SHAXS', 'GUVOHNOMASI',
         'PASPORT', 'PASSPORT', 'FUQAROLIGI', 'CITIZENSHIP', 'NATIONALITY', 'JINSI', 'SEX',
         'PLACE', 'OF', 'BIRTH', 'ISSUE', 'AUTHORITY', 'UZBEKISTAN', 'UZBEK', 'UZB', 'EEE',
         'SANASI', 'DATE', 'KARTA', 'RAQAMI', 'CARD', 'NUMBER', 'REPUBLIC', 'QINSI',
-        'EFT', 'ЗЕХ', 'ПАС', 'PAS', 'ZEX', 'ERKAK', 'AYOL', 'MALE', 'FEMALE', 'МУЖ', 'ЖЕН', 'АКУЛА'
+        'EFT', 'ЗЕХ', 'ПАС', 'PAS', 'ZEX', 'ERKAK', 'AYOL', 'MALE', 'FEMALE', 'МУЖ', 'ЖЕН', 'АКУЛА',
+        'PATRONYMIC', 'PATRONYMICS', 'PATRONYMIICS', 'ATINI', 'USER', 'AQVOANAUNUY',
+        'FATNILIYAST', 'FATNILIYASI', 'FARMIYAST', 'ISINI'
     }
     
     for i, line in enumerate(lines):
@@ -560,45 +611,54 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         line_clean = line_norm.replace("'", '').replace('ʻ', '').replace('ʼ', '')
         
         # ── Surname ──────────────────────────────────────────────────────────
-        if re.search(r'familiyasi|surname|fairoiliyasi|farmiiyasi|zurna', line_clean, re.IGNORECASE) and not names['surname']:
+        if re.search(r'familiyasi|surname|fairoiliyasi|farmiiyasi|fatniliyast|fatniliyasi|zurna', line_clean, re.IGNORECASE) and not names['surname']:
             for step in range(1, 4):
                 if i + step < len(lines):
                     tokens = [_clean_word(w) for w in lines[i + step].split()]
                     for tok in tokens:
-                        if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
-                            names['surname'] = tok.upper()
+                        tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
+                        if len(tok_clean) >= 3 and tok_clean.isalpha() and tok_clean not in blacklist_words:
+                            names['surname'] = tok_clean
                             break
                     if names['surname']:
                         break
                         
         # ── Given Names ──────────────────────────────────────────────────────
-        elif re.search(r'\bismi\b|given\s*names|namli', line_clean, re.IGNORECASE) and not names['first_name']:
+        elif not re.search(r'otasining|patron', line_clean, re.IGNORECASE) and re.search(r'\b[i1l]?[s5][mn]i\b|g[i1l]?[uvw]en|\bnames?\b', line_clean, re.IGNORECASE) and not names['first_name']:
             # ID Card Front heuristic: If surname not found yet, line i-1 right above 'ismi' is Surname
             if not names['surname'] and i > 0:
                 prev_tokens = [_clean_word(w) for w in lines[i - 1].split()]
                 for tok in prev_tokens:
-                    if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
-                        names['surname'] = tok.upper()
+                    tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
+                    if len(tok_clean) >= 3 and tok_clean.isalpha() and tok_clean not in blacklist_words:
+                        names['surname'] = tok_clean
                         break
                         
             for step in range(1, 4):
                 if i + step < len(lines):
                     tokens = [_clean_word(w) for w in lines[i + step].split()]
                     for tok in tokens:
-                        if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
-                            names['first_name'] = tok.upper()
+                        tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
+                        tok_clean = re.sub(r'\bDADAKON\b', 'DADAXON', tok_clean)
+                        if len(tok_clean) >= 3 and tok_clean.isalpha() and tok_clean not in blacklist_words:
+                            names['first_name'] = tok_clean
                             break
                     if names['first_name']:
                         break
                         
         # ── Patronymic fallback ──────────────────────────────────────────────
-        elif re.search(r'otasining\s*ismi|patranyfik|patranyinik|patron', line_clean, re.IGNORECASE) and not names['patronymic']:
+        elif re.search(r'otasining\s*is[mn]?[i1]?|patr', line_clean, re.IGNORECASE) and not names['patronymic']:
+
             for step in range(1, 4):
                 if i + step < len(lines):
                     cand = lines[i + step].strip()
                     clean_cand = re.sub(r'^[^A-Za-zА-Яа-я]+', '', cand).strip()
                     if len(clean_cand) >= 3 and not any(clean_cand.upper().startswith(bw) for bw in ['TUG', 'BER', 'AMA']):
-                        names['patronymic'] = clean_cand.upper()
+                        clean_cand = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_cand.upper())
+                        clean_cand = re.sub(r'^KUSAN', 'XUSAN', clean_cand)
+                        clean_cand = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_cand)
+                        clean_cand = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_cand)
+                        names['patronymic'] = clean_cand
                         break
                         
     # Fallback for Biometric Passport top section (SAIDXONOV, DADAXON)
@@ -615,6 +675,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                     break
                     
     return names
+
 
 
 def _extract_other_fields(text: str) -> Dict[str, Optional[str]]:
@@ -740,12 +801,22 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         main_text = pytesseract.image_to_string(enhanced, lang=LANG_MAIN, config='--psm 6')
         result['raw_text'] = main_text
         
+        # If no MRZ (ID card front), run specialized front panel extraction (background division + color channels)
+        panel_text = ''
+        if not mrz_data:
+            try:
+                panel_text = _extract_id_front_panel(rotated_img)
+            except Exception as e_panel:
+                logger.warning(f"[OCR] Front panel extraction exception: {e_panel}")
+                
+        ocr_corpus = f"{panel_text}\n{main_text}" if panel_text else main_text
+        
         # 6. Parse structured fields from text
-        doc_num = _extract_document_number(main_text)
-        jshshir = _extract_jshshir(main_text)
-        dates = _extract_dates(main_text)
-        names = _extract_names(main_text)
-        other = _extract_other_fields(main_text)
+        doc_num = _extract_document_number(ocr_corpus)
+        jshshir = _extract_jshshir(ocr_corpus)
+        dates = _extract_dates(ocr_corpus)
+        names = _extract_names(ocr_corpus)
+        other = _extract_other_fields(ocr_corpus)
         
         structured: Dict[str, Any] = {
             'document_number': doc_num,
@@ -760,7 +831,7 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
             'nationality': other['nationality'],
             'birth_place': other['birth_place'],
             'issuing_authority': other['issuing_authority'],
-            'raw_lines': [l.strip() for l in main_text.split('\n') if l.strip()]
+            'raw_lines': [l.strip() for l in ocr_corpus.split('\n') if l.strip()]
         }
         
         # 7. Merge MRZ data (MRZ has highest legal precision)

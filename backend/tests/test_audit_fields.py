@@ -3,8 +3,8 @@ import sys
 import django
 from pathlib import Path
 
-sys.stdout.reconfigure(encoding='utf-8')
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 

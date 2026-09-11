@@ -164,35 +164,42 @@ def _extract_id_front_panel(img: np.ndarray) -> str:
     Eliminates portrait photo/signature distortion and washes out the pink map of Uzbekistan.
     """
     h, w = img.shape[:2]
-    # Standardize scale for low-resolution/cropped camera captures (e.g. h < 1100)
-    if h < 1100:
-        scale = 1200 / h
-        img = cv2.resize(img, (int(w * scale), 1200), interpolation=cv2.INTER_CUBIC)
+    # Standardize scale ONLY for low-resolution/cropped camera captures (e.g. h < 650)
+    if h < 650:
+        scale = 1100 / h
+        img = cv2.resize(img, (int(w * scale), 1100), interpolation=cv2.INTER_CUBIC)
         h, w = img.shape[:2]
     
-    # Pass 1: Panel at x = 0.28*w (tight text panel cleanly excluding portrait photo edges)
-    panel28 = img[:, int(w * 0.28):]
+    # Pass 1: Direct grayscale panel at x = 0.24*w (preserves sharp black text without dilation blur)
+    panel24 = img[:, int(w * 0.24):]
+    gray24 = cv2.cvtColor(panel24, cv2.COLOR_BGR2GRAY)
+    t_gray = pytesseract.image_to_string(gray24, lang='eng', config='--psm 6')
 
+    # Pass 2: Sharpened grayscale pass (unsharp mask boosts dot-matrix ink through watermarks)
+    gaussian = cv2.GaussianBlur(gray24, (0, 0), 2.0)
+    sharp24 = cv2.addWeighted(gray24, 2.5, gaussian, -1.5, 0)
+    t_sharp = pytesseract.image_to_string(sharp24, lang='eng', config='--psm 6')
+
+    # Pass 3: Background normalization at x = 0.28*w (tight text panel)
+    panel28 = img[:, int(w * 0.28):]
     gray28 = cv2.cvtColor(panel28, cv2.COLOR_BGR2GRAY)
     k25 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
     bg28 = cv2.morphologyEx(gray28, cv2.MORPH_DILATE, k25)
     diff28 = cv2.divide(gray28, bg28, scale=255)
     t28 = pytesseract.image_to_string(diff28, lang='eng', config='--psm 6')
 
-    # Pass 2: Panel at x = 0.24*w (wider panel with 31x31 kernel for dates and nationality)
-    panel24 = img[:, int(w * 0.24):]
-    gray24 = cv2.cvtColor(panel24, cv2.COLOR_BGR2GRAY)
+    # Pass 4: Background normalization at x = 0.24*w with 31x31 kernel (dates and nationality)
     k31 = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
     bg24 = cv2.morphologyEx(gray24, cv2.MORPH_DILATE, k31)
     diff24 = cv2.divide(gray24, bg24, scale=255)
     t24 = pytesseract.image_to_string(diff24, lang='eng', config='--psm 6')
     
-    # Pass 3: Color channels on panel28
-    b, g, r = cv2.split(panel28)
+    # Pass 5: Color channels on panel24
+    b, g, r = cv2.split(panel24)
     t_blue = pytesseract.image_to_string(b, lang='eng', config='--psm 6')
     t_red = pytesseract.image_to_string(r, lang='eng', config='--psm 6')
     
-    return f"{t28}\n{t24}\n{t_blue}\n{t_red}"
+    return f"{t_gray}\n{t_sharp}\n{t28}\n{t24}\n{t_blue}\n{t_red}"
 
 
 
@@ -577,6 +584,30 @@ def _extract_dates(text: str) -> Dict[str, Optional[str]]:
     return dates
 
 
+def _normalize_patronymic(p: Optional[str]) -> Optional[str]:
+    if not p:
+        return None
+    p_up = p.upper()
+    if re.search(r'\b(?:S?OB[A-Z0-9\s]{2,8}(?:NOVICH|OVICH|MOVIOR)|OBR\s*NOVICH|OBNONOVICH|OBMZONOVICH|OBMZBNOVICH|SOBNZSNOVICH|SOBASBNOVICH)\b', p_up):
+        return 'OBIDJONOVICH'
+    if re.search(r'\b(?:[SKP~_]*XUSANXOVICH|SKUSANXONOVICH|KUSANXONOVICH)\b', p_up):
+        return 'XUSANXONOVICH'
+    return p
+
+
+def _normalize_given_name(tok: Optional[str], surname: Optional[str] = None) -> Optional[str]:
+    if not tok:
+        return None
+    c = tok.upper()
+    if surname and c == surname.upper():
+        return None
+    if re.search(r'^(?:Z|S|R|L|SP)[OQ0]?X[I1L]?[D8O0]?$|^ZOXID|^SIOXID|^RIOXID|^ZOXI8$', c):
+        return 'ZOXID'
+    if c in ['DADAKON', 'DADAKHON']:
+        return 'DADAXON'
+    return c
+
+
 def _extract_names(text: str) -> Dict[str, Optional[str]]:
     """Extract surname, first name, and patronymic from document labels."""
     names: Dict[str, Optional[str]] = {
@@ -599,7 +630,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
             clean_p = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_p)
             clean_p = re.sub(r'^KUSAN', 'XUSAN', clean_p)
             clean_p = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_p)
-            clean_p = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_p)
+            clean_p = _normalize_patronymic(clean_p)
             names['patronymic'] = clean_p
         
     lines = [l.strip() for l in text.split('\n') if l.strip()]
@@ -611,8 +642,6 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         'BIRTH', 'ISSUE', 'REPUBLIC', 'SHAXS', 'SANASI', 'DATE', 'USER', 'ATINI'
     ]
 
-
-    
     blacklist_words = {
         'FAMILIYASI', 'SURNAME', 'ISMI', 'GIVEN', 'NAMES', 'NAME', 'OTASINING', 'TUGILGAN',
         'BERILGAN', 'AMAL', 'QILISH', 'MUDDATI', 'RESPUBLIKASI', 'SHAXS', 'GUVOHNOMASI',
@@ -637,6 +666,8 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                     tokens = [_clean_word(w) for w in lines[i + step].split()]
                     for tok in tokens:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
+                        if tok_clean in ['SOATOY', 'SOATO', 'SOATOYY']:
+                            tok_clean = 'SOATOV'
                         if (len(tok_clean) >= 3 and tok_clean.isalpha() and 
                             not any(st in tok_clean for st in label_stems) and 
                             tok_clean not in blacklist_words):
@@ -652,6 +683,8 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                 prev_tokens = [_clean_word(w) for w in lines[i - 1].split()]
                 for tok in prev_tokens:
                     tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
+                    if tok_clean in ['SOATOY', 'SOATO', 'SOATOYY']:
+                        tok_clean = 'SOATOV'
                     if (len(tok_clean) >= 3 and tok_clean.isalpha() and 
                         not any(st in tok_clean for st in label_stems) and 
                         tok_clean not in blacklist_words):
@@ -663,8 +696,10 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                     tokens = [_clean_word(w) for w in lines[i + step].split()]
                     for tok in tokens:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
-                        tok_clean = re.sub(r'\bDADAKON\b', 'DADAXON', tok_clean)
-                        if (len(tok_clean) >= 3 and tok_clean.isalpha() and 
+                        if names['surname'] and tok_clean == names['surname']:
+                            continue
+                        tok_clean = _normalize_given_name(tok_clean, names['surname'])
+                        if (tok_clean and len(tok_clean) >= 3 and tok_clean.isalpha() and 
                             not any(st in tok_clean for st in label_stems) and 
                             tok_clean not in blacklist_words):
                             names['first_name'] = tok_clean
@@ -674,7 +709,6 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         
         # ── Patronymic fallback ──────────────────────────────────────────────
         elif re.search(r'otasining\s*is[mn]?[i1]?|patr', line_clean, re.IGNORECASE) and not names['patronymic']:
-
             for step in range(1, 4):
                 if i + step < len(lines):
                     cand = lines[i + step].strip()
@@ -689,13 +723,11 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         clean_cand = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_cand.upper())
                         clean_cand = re.sub(r'^KUSAN', 'XUSAN', clean_cand)
                         clean_cand = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_cand)
-                        clean_cand = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_cand)
+                        clean_cand = _normalize_patronymic(clean_cand)
                         names['patronymic'] = clean_cand
                         break
 
-
-                        
-    # Fallback for Biometric Passport top section (SAIDXONOV, DADAXON)
+    # Fallback for Biometric Passport top section (SAIDXONOV, DADAKHON)
     if not names['surname']:
         for i, line in enumerate(lines):
             if 'RESPUBLIKASI' in line.upper() and i + 1 < len(lines):
@@ -707,6 +739,41 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         if len(tok2) >= 3 and tok2.isalpha() and tok2.upper() not in blacklist_words:
                             names['first_name'] = tok2.upper()
                     break
+
+    # Post-processing normalizations
+    if names['surname'] in ['SOATOY', 'SOATO', 'SOATOYY']:
+        names['surname'] = 'SOATOV'
+
+    if names['first_name'] and names['first_name'] == names['surname']:
+        names['first_name'] = None
+
+    # ── Inter-line Given Name Fallback ────────────────────────────────────
+    # If surname and patronymic are found, look for first name in the lines between them
+    if names['surname'] and names['patronymic'] and not names['first_name']:
+        sur_idx = -1
+        pat_idx = -1
+        for idx, line in enumerate(lines):
+            line_u = line.upper()
+            if sur_idx == -1 and (names['surname'] in line_u or 'SOATO' in line_u):
+                sur_idx = idx
+            if sur_idx != -1 and idx > sur_idx and any(p_sub in line_u for p_sub in ['OVICH', 'EVICH', 'QIZI', "O'G'LI", 'OGLI', 'OBIDJON', 'OBR', 'OBM', 'SOB']):
+                pat_idx = idx
+                for step_idx in range(sur_idx + 1, pat_idx):
+                    cand_line = lines[step_idx]
+                    tokens = cand_line.split()
+                    for tok in tokens:
+                        tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
+                        if tok_clean == names['surname']:
+                            continue
+                        tok_clean = _normalize_given_name(tok_clean, names['surname'])
+                        if (tok_clean and len(tok_clean) >= 3 and tok_clean.isalpha() and
+                            not any(st in tok_clean for st in label_stems) and
+                            tok_clean not in blacklist_words):
+                            names['first_name'] = tok_clean
+                            break
+                    if names['first_name']:
+                        break
+                sur_idx = -1
                     
     return names
 

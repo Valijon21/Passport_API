@@ -7,9 +7,13 @@ Handles: skewed images, low contrast, noise, MRZ TD1 (ID card) and TD3 (passport
 Pipeline:
   1. Load & validate image (check dimensions and orientation)
   2. Safe Deskew (contour median, clamped to ±15°, never flips 90°)
-  3. Targeted MRZ detection & extraction (bottom 35% ROI + character whitelist)
+  3. Targeted MRZ detection & extraction (multi-ratio ROI + character whitelist)
   4. Dual-pass clean preprocessing (clean grayscale for document body, Otsu/CLAHE for MRZ)
-  5. Robust field parsing (JSHSHIR, document number, full names, dates, gender)
+  5. Robust field parsing:
+     - Document Number, 14-digit JSHSHIR (PINFL)
+     - Full names (Surname, Given Names, Patronymic)
+     - Universal chronological dates (Birth, Issue, Expiry)
+     - Clean toponym birth place and issuing authority
   6. Fusion: merge structured fields with high-confidence MRZ data
 """
 
@@ -143,12 +147,10 @@ def _deskew_safe(img: np.ndarray) -> Tuple[np.ndarray, float]:
 
 
 def _prepare_main_text_image(img: np.ndarray) -> np.ndarray:
-    """
-    Clean grayscale without heavy CLAHE, preserving text against rainbow guilloche background.
-    """
+    """Clean grayscale with mild bilateral filter for document body."""
     h, w = img.shape[:2]
-    if h < 900:
-        scale = 1000 / h
+    if h < 1000:
+        scale = 1100 / h
         img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -161,7 +163,10 @@ def _prepare_main_text_image(img: np.ndarray) -> np.ndarray:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _clean_mrz_text(raw_text: str) -> List[str]:
-    """Clean OCR output for MRZ: transliterate Cyrillic, replace noise characters."""
+    """
+    Clean OCR output for MRZ.
+    Accepts lines with '<' (TD1 lines, TD3 line 1) AND lines without '<' (TD3 passport line 2).
+    """
     lines = []
     for line in raw_text.split('\n'):
         line = line.strip()
@@ -175,8 +180,10 @@ def _clean_mrz_text(raw_text: str) -> List[str]:
                 cleaned += '<'
             elif ch.isalnum() or ch == '<':
                 cleaned += ch.upper()
+                
         cleaned = re.sub(r'[\s.]+', '', cleaned)
-        if len(cleaned) >= 20 and '<' in cleaned:
+        # Accept if >= 20 chars and either contains chevron OR is a 30+ char alphanumeric sequence (Passport line 2)
+        if len(cleaned) >= 20 and ('<' in cleaned or (len(cleaned) >= 30 and bool(re.search(r'\d{6,}', cleaned)))):
             lines.append(cleaned)
     return lines
 
@@ -184,12 +191,12 @@ def _clean_mrz_text(raw_text: str) -> List[str]:
 def _extract_mrz_from_image(img: np.ndarray) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Extract MRZ with specialized ROI and whitelist OCR.
-    Checks multiple candidate ratios (0.65, 0.58, 0.72) to guarantee full capture.
+    Checks multiple adaptive ratios (0.80, 0.72 for passports; 0.65, 0.58 for cards).
     """
     h, w = img.shape[:2]
     is_vertical = (h > w)
     
-    candidate_ratios = [0.72, 0.65] if is_vertical else [0.65, 0.58]
+    candidate_ratios = [0.80, 0.72, 0.65] if is_vertical else [0.65, 0.58, 0.72]
     best_mrz_data = None
     best_raw_text = ''
     
@@ -238,7 +245,6 @@ def _parse_mrz_birth_date(s: str) -> Optional[str]:
         return None
         
     current_year = int(time.strftime('%Y'))
-    # In Uzbekistan, ID cards/passports are held by people aged >= 14
     max_birth_2digit = (current_year - 14) % 100
     if yy <= max_birth_2digit:
         year = 2000 + yy
@@ -269,89 +275,133 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
         return None
         
     try:
-        # ── Check TD3 First (Passport: line starting with P) ─────────────────
-        for i, l in enumerate(lines):
-            if l.startswith('P') and len(l) >= 25:
-                l1 = l
-                l2 = lines[i + 1] if i + 1 < len(lines) else ''
-                names_raw = l1[5:].split('<<')
-                surname = re.sub(r'^[0-9]+', '', names_raw[0].replace('<', ' ').strip())
-                first_name = re.sub(r'^[0-9]+', '', names_raw[1].replace('<', ' ').strip()) if len(names_raw) > 1 else ''
-                
-                doc_match = re.search(r'([A-Z]{2}\d{7})', l2)
-                doc_num = doc_match.group(1) if doc_match else (l2[0:9].replace('<', '').strip() if len(l2) >= 9 else None)
-                
-                nationality = l2[10:13].replace('<', '') if len(l2) >= 13 else 'UZB'
-                birth_date = _parse_mrz_birth_date(l2[13:19]) if len(l2) >= 19 else None
-                gender_ch = l2[20] if len(l2) > 20 else ''
-                gender = 'Erkak' if gender_ch == 'M' else ('Ayol' if gender_ch == 'F' else None)
-                expiry_date = _parse_mrz_expiry_date(l2[21:27]) if len(l2) >= 27 else None
-                
-                jshshir = None
-                jsh_match = re.search(r'([3-6]\d{13})', l2)
-                if jsh_match:
-                    jshshir = jsh_match.group(1)
-                    
-                return {
-                    'mrz_detected': True,
-                    'format': 'TD3 (Passport 2-line)',
-                    'document_number': doc_num,
-                    'jshshir': jshshir,
-                    'surname': surname,
-                    'first_name': first_name,
-                    'birth_date': birth_date,
-                    'expiry_date': expiry_date,
-                    'gender': gender,
-                    'nationality': 'O\'zbekiston' if nationality in ['UZB', 'UZ'] else nationality,
-                }
-
-        # ── Check TD1 (ID Card: 3 lines x 30) ────────────────────────────────
+        # ── 1. Check TD1 First if len(lines) >= 3 (ID Card 3-line) ───────────
         if len(lines) >= 3:
-            # Ensure line 1 of TD1 starts with valid ICAO TD1 prefix: I, 1, A, C or has UZB
-            l1, l2, l3 = lines[-3], lines[-2], lines[-1]
-            if (l1.startswith(('I', '1', 'A', 'C')) or 'UZB' in l1[:8]) and not l1.startswith('P'):
-                doc_num = None
-                jshshir = None
-                
-                doc_match = re.search(r'([A-Z]{2}\d{7})', l1)
-                if doc_match:
-                    doc_num = doc_match.group(1)
-                    after_doc = l1[doc_match.end():]
-                    jsh_match = re.search(r'^\d([3-6]\d{13})', after_doc)
-                    if jsh_match:
-                        jshshir = jsh_match.group(1)
-                    else:
-                        jsh_cand = re.search(r'([3-6]\d{13})', after_doc)
-                        if jsh_cand:
-                            jshshir = jsh_cand.group(1)
-                elif len(l1) >= 14:
-                    doc_num = l1[5:14].replace('<', '').strip()
+            for i in range(len(lines) - 2):
+                l1, l2, l3 = lines[i], lines[i + 1], lines[i + 2]
+                # TD1 line 1: starts with I, 1, A, C or has UZB in first 8 chars, never P<
+                is_td1_l1 = (l1.startswith(('I', '1', 'A', 'C', 'IT', 'IU')) or 'UZB' in l1[:8]) and not l1.startswith(('P<', 'PM', 'PA'))
+                if is_td1_l1 and len(l1) >= 20:
+                    doc_num = None
+                    jshshir = None
                     
-                birth_date = _parse_mrz_birth_date(l2[0:6])
-                gender_ch = l2[7] if len(l2) > 7 else ''
-                gender = 'Erkak' if gender_ch == 'M' else ('Ayol' if gender_ch == 'F' else None)
-                expiry_date = _parse_mrz_expiry_date(l2[8:14])
-                nationality = l2[15:18].replace('<', '') if len(l2) >= 18 else 'UZB'
-                
-                names = l3.split('<<')
-                surname = re.sub(r'^[0-9]+', '', names[0].replace('<', ' ').strip())
-                first_name = re.sub(r'^[0-9]+', '', names[1].replace('<', ' ').strip()) if len(names) > 1 else ''
-                surname = re.sub(r'^[A-Z]\s+', '', surname)
-                first_name = re.sub(r'^[A-Z]\s+', '', first_name)
-                
-                return {
-                    'mrz_detected': True,
-                    'format': 'TD1 (ID Card 3-line)',
-                    'document_number': doc_num,
-                    'jshshir': jshshir,
-                    'surname': surname,
-                    'first_name': first_name,
-                    'birth_date': birth_date,
-                    'expiry_date': expiry_date,
-                    'gender': gender,
-                    'nationality': 'O\'zbekiston' if nationality in ['UZB', 'UZ'] else nationality,
-                }
-            
+                    # Normalize OCR confusion A0 -> AD
+                    l1_norm = re.sub(r'\bA0(\d{7})\b', r'AD\1', l1)
+                    doc_match = re.search(r'([A-Z]{2}\d{7})', l1_norm)
+                    if doc_match:
+                        doc_num = doc_match.group(1)
+                        after_doc = l1_norm[doc_match.end():]
+                        # In Uzbek TD1, after doc_num + 1-digit check digit is 14-digit JSHSHIR
+                        if len(after_doc) >= 15 and after_doc[1:15].isdigit() and after_doc[1] in '3456':
+                            jshshir = after_doc[1:15]
+                        else:
+                            jsh_match = re.search(r'([3-6]\d{13})', after_doc)
+                            if jsh_match:
+                                jshshir = jsh_match.group(1)
+                    if not jshshir:
+                        jsh_match = re.search(r'([3-6]\d{13})', l1_norm)
+                        if jsh_match:
+                            jshshir = jsh_match.group(1)
+                    if not doc_num and len(l1) >= 14:
+                        cand = l1[5:14].replace('<', '').strip()
+                        if len(cand) == 9:
+                            doc_num = cand
+                            
+                    # Line 2: Birth date (0:6), check digit (6), Sex (7), Expiry date (8:14), check digit (14), Nationality (15:18)
+                    l2_digs = l2.replace('O', '0').replace('o', '0').replace('B', '8').replace('S', '5').replace('s', '5').replace('Z', '2').replace('I', '1').replace('l', '1')
+                    
+                    # Sex detection
+                    gender = None
+                    if len(l2) > 7:
+                        sex_slice = l2[6:9]
+                        if 'M' in sex_slice:
+                            gender = 'Erkak'
+                        elif 'F' in sex_slice:
+                            gender = 'Ayol'
+                            
+                    # Robust Birth & Expiry dates using sex anchor or positional slices
+                    m_b = re.search(r'(\d{6})\d*[MF]', l2_digs)
+                    birth_date = _parse_mrz_birth_date(m_b.group(1)) if m_b else _parse_mrz_birth_date(l2_digs[0:6])
+                    
+                    m_e = re.search(r'[MF]\D*(\d{6})', l2_digs)
+                    expiry_date = _parse_mrz_expiry_date(m_e.group(1)) if m_e else _parse_mrz_expiry_date(l2_digs[8:14])
+                    nationality = "O'zbekiston" if 'UZB' in l2 else None
+                    
+                    # Line 3: Names (SURNAME<<FIRST_NAME)
+                    l3_clean = re.sub(r'<[A-Z0-9]<', '<<', l3)
+                    parts = [p.replace('<', ' ').strip() for p in l3_clean.split('<<') if p.strip()]
+                    surname = parts[0] if len(parts) > 0 else ''
+                    first_name = parts[1] if len(parts) > 1 else ''
+                    # Clean trailing single char noise (e.g. E, B, K)
+                    surname = re.sub(r'\s+[A-Z]$', '', surname).strip()
+                    first_name = re.sub(r'\s+[A-Z]$', '', first_name).strip()
+                    first_name = re.sub(r'^[A-Z]\s+', '', first_name).strip()
+                    surname = re.sub(r'^[0-9]+', '', surname).strip()
+                    first_name = re.sub(r'^[0-9]+', '', first_name).strip()
+                    first_name = re.sub(r'([A-Z]{3,})[EK]+$', r'\1', first_name)
+                    
+                    if doc_num or jshshir or surname or birth_date:
+                        return {
+                            'mrz_detected': True,
+                            'format': 'TD1 (ID Card 3-line)',
+                            'document_number': doc_num,
+                            'jshshir': jshshir,
+                            'surname': surname or None,
+                            'first_name': first_name or None,
+                            'birth_date': birth_date,
+                            'expiry_date': expiry_date,
+                            'gender': gender,
+                            'nationality': nationality or "O'zbekiston",
+                        }
+
+        # ── 2. Check TD3 (Passport: 2 lines, Line 1 starts with P) ───────────
+        for i in range(len(lines)):
+            l1 = lines[i]
+            if (l1.startswith(('P', 'Р')) or l1.startswith('P<')) and not l1.startswith(('I', '1', 'A', 'C', 'IT', 'IU')) and len(l1) >= 25:
+                l2 = lines[i + 1] if i + 1 < len(lines) else ''
+                if len(l2) >= 28:
+                    names_part = l1[5:] if 'UZB' in l1[:6] else l1[2:]
+                    names_raw = names_part.split('<<')
+                    surname = re.sub(r'^[0-9]+', '', names_raw[0].replace('<', ' ').strip())
+                    first_name = re.sub(r'^[0-9]+', '', names_raw[1].replace('<', ' ').strip()) if len(names_raw) > 1 else ''
+                    surname = re.sub(r'^[A-Z]\s+', '', surname).strip()
+                    first_name = re.sub(r'^[A-Z]\s+', '', first_name).strip()
+                    # Strip chevron noise at end of first name (e.g. DADAKHONEK -> DADAKHON)
+                    first_name = re.sub(r'[<EK]+$', '', first_name).strip()
+                    
+                    doc_match = re.search(r'([A-Z]{2}\d{7})', l2)
+                    doc_num = doc_match.group(1) if doc_match else (l2[0:9].replace('<', '').strip() if len(l2) >= 9 else None)
+                    
+                    nationality = l2[10:13].replace('<', '') if len(l2) >= 13 else 'UZB'
+                    birth_date = _parse_mrz_birth_date(l2[13:19]) if len(l2) >= 19 else None
+                    gender_ch = l2[20] if len(l2) > 20 else ''
+                    gender = 'Erkak' if gender_ch == 'M' else ('Ayol' if gender_ch == 'F' else None)
+                    expiry_date = _parse_mrz_expiry_date(l2[21:27]) if len(l2) >= 27 else None
+                    
+                    # In TD3 Passport, JSHSHIR is positions 28 to 42 (14 digits)
+                    jshshir = None
+                    if len(l2) >= 42:
+                        cand_pinfl = l2[28:42]
+                        if len(cand_pinfl) == 14 and cand_pinfl[0] in '3456' and cand_pinfl.isdigit():
+                            jshshir = cand_pinfl
+                            
+                    if not jshshir:
+                        jsh_match = re.search(r'([3-6]\d{13})', l2[25:])
+                        if jsh_match:
+                            jshshir = jsh_match.group(1)
+                            
+                    return {
+                        'mrz_detected': True,
+                        'format': 'TD3 (Passport 2-line)',
+                        'document_number': doc_num,
+                        'jshshir': jshshir,
+                        'surname': surname or None,
+                        'first_name': first_name or None,
+                        'birth_date': birth_date,
+                        'expiry_date': expiry_date,
+                        'gender': gender,
+                        'nationality': 'O\'zbekiston' if nationality in ['UZB', 'UZ'] else nationality,
+                    }
     except Exception as e:
         logger.warning(f"[MRZ] Parse istisnosi: {e}")
         
@@ -359,13 +409,23 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STRUCTURED FIELD EXTRACTION (REGEX & HEURISTICS)
+#  STRUCTURED FIELD EXTRACTION (TEXT REGEX & HEURISTICS)
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _clean_word(w: str) -> str:
+    """Strip all non-alphabetic leading/trailing punctuation."""
+    return re.sub(r'^[^A-ZА-Яa-zа-я]+|[^A-ZА-Яa-zа-я]+$', '', w).strip()
+
 
 def _extract_document_number(text: str) -> Optional[str]:
     """Extract strict Uzbek document number (2 uppercase letters + 7 digits)."""
-    matches = re.findall(r'\b([A-Z]{2}\s*\d{7})\b', text)
-    blacklist = {'UZ', 'RE', 'SH', 'GU', 'KA', 'DA', 'PE', 'ZB', 'OT', 'TU'}
+    # Normalize Cyrillic lookalikes
+    text_norm = text.replace('А', 'A').replace('В', 'B').replace('Е', 'E').replace('С', 'C').replace('Р', 'P')
+    # Fix OCR confusion A0 -> AD when followed by 7 digits
+    text_norm = re.sub(r'\bA0(\d{7})\b', r'AD\1', text_norm)
+    
+    matches = re.findall(r'\b([A-Z]{2}\s*\d{7})\b', text_norm)
+    blacklist = {'UZ', 'RE', 'SH', 'GU', 'KA', 'DA', 'PE', 'ZB', 'OT', 'TU', 'AM'}
     
     for m in matches:
         clean = re.sub(r'\s+', '', m)
@@ -373,13 +433,27 @@ def _extract_document_number(text: str) -> Optional[str]:
         if prefix not in blacklist:
             return clean
             
-    m_ctx = re.search(r'(?:karta\s*raqami|document\s*no|card\s*number)[:\s]*([A-Z]{2}\s*\d{7})', text, re.IGNORECASE)
+    # Search for candidate tokens with OCR digit confusions (e.g. AEISSIZ18 -> AE1551318)
+    cand_tokens = re.findall(r'\b([A-Z]{2}[A-Z0-9]{7})\b', text_norm)
+    for ct in cand_tokens:
+        prefix = ct[:2]
+        if prefix in {'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'FA'}:
+            suffix = ct[2:]
+            suffix_digs = suffix.replace('I', '1').replace('l', '1').replace('S', '5').replace('s', '5').replace('Z', '3').replace('B', '8').replace('O', '0')
+            if suffix_digs.isdigit() and len(suffix_digs) == 7:
+                return prefix + suffix_digs
+
+    m_ctx = re.search(r'(?:karta\s*raqami|pasport\s*raqami|document\s*no|card\s*number)[:\s\w/]*?([A-Z]{2}\s*[A-Z0-9]{7})', text_norm, re.IGNORECASE)
     if m_ctx:
         clean = re.sub(r'\s+', '', m_ctx.group(1))
-        if clean[:2] not in blacklist:
-            return clean
+        prefix = clean[:2]
+        suffix = clean[2:]
+        if prefix not in blacklist:
+            suffix_digs = suffix.replace('I', '1').replace('l', '1').replace('S', '5').replace('s', '5').replace('Z', '2').replace('B', '8').replace('O', '0')
+            if suffix_digs.isdigit() and len(suffix_digs) == 7:
+                return prefix + suffix_digs
             
-    m_num9 = re.findall(r'\b(\d{9})\b', text)
+    m_num9 = re.findall(r'\b(\d{9})\b', text_norm)
     if m_num9:
         return m_num9[0]
         
@@ -404,7 +478,10 @@ def _extract_jshshir(text: str) -> Optional[str]:
 
 
 def _extract_dates(text: str) -> Dict[str, Optional[str]]:
-    """Extract birth date, issue date, and expiry date, supporting dots, slashes, and spaces."""
+    """
+    Extract birth date, issue date, and expiry date.
+    Uses universal chronological sorting heuristic: Birth < Issue < Expiry.
+    """
     dates: Dict[str, Optional[str]] = {
         'birth_date': None,
         'issue_date': None,
@@ -419,33 +496,33 @@ def _extract_dates(text: str) -> Dict[str, Optional[str]]:
                 return f"{yyyy:04d}-{mm:02d}-{dd:02d}"
         return None
 
-    # Proximity searches
-    m_birth = re.search(r'(?:tug[\'ʻʼ`]?ilgan|birth)[:\s\w/]*?(\d{2}[./\-\s]+\d{2}[./\-\s]+\d{4})', text, re.IGNORECASE)
-    if m_birth:
-        dates['birth_date'] = norm_date(m_birth.group(1))
-        
-    m_issue = re.search(r'(?:berilgan|issue)[:\s\w/]*?(\d{2}[./\-\s]+\d{2}[./\-\s]+\d{4})', text, re.IGNORECASE)
-    if m_issue:
-        dates['issue_date'] = norm_date(m_issue.group(1))
-        
-    m_expiry = re.search(r'(?:amal\s*qilish|expiry)[:\s\w/]*?(\d{2}[./\-\s]+\d{2}[./\-\s]+\d{4})', text, re.IGNORECASE)
-    if m_expiry:
-        dates['expiry_date'] = norm_date(m_expiry.group(1))
-        
-    # Unmatched fallback dates
     all_raw = re.findall(r'\b\d{2}[./\-\s]+\d{2}[./\-\s]+\d{4}\b', text)
-    all_dates = [norm_date(d) for d in all_raw if norm_date(d)]
+    unique_dates = sorted(list(set([norm_date(d) for d in all_raw if norm_date(d)])))
     
-    for d in all_dates:
-        if d in dates.values():
-            continue
-        year = int(d.split('-')[0])
-        if year < 2012 and not dates['birth_date']:
-            dates['birth_date'] = d
-        elif 2020 <= year <= 2027 and not dates['issue_date']:
-            dates['issue_date'] = d
-        elif year > 2028 and not dates['expiry_date']:
-            dates['expiry_date'] = d
+    if len(unique_dates) >= 3:
+        dates['birth_date'] = unique_dates[0]
+        dates['issue_date'] = unique_dates[1]
+        dates['expiry_date'] = unique_dates[2]
+    elif len(unique_dates) == 2:
+        y0 = int(unique_dates[0].split('-')[0])
+        y1 = int(unique_dates[1].split('-')[0])
+        if y0 < 2012:
+            dates['birth_date'] = unique_dates[0]
+            if y1 <= 2026:
+                dates['issue_date'] = unique_dates[1]
+            else:
+                dates['expiry_date'] = unique_dates[1]
+        else:
+            dates['issue_date'] = unique_dates[0]
+            dates['expiry_date'] = unique_dates[1]
+    elif len(unique_dates) == 1:
+        y = int(unique_dates[0].split('-')[0])
+        if y < 2012:
+            dates['birth_date'] = unique_dates[0]
+        elif y <= 2026:
+            dates['issue_date'] = unique_dates[0]
+        else:
+            dates['expiry_date'] = unique_dates[0]
             
     return dates
 
@@ -458,57 +535,85 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         'patronymic': None,
     }
     
+    # 1. Look for Patronymic across full text (supports Uzbek apostrophes in name stem and suffix)
+    m_pat = re.search(r'\b([A-Za-zА-Яа-я][A-Za-zА-Яа-я\'ʻʼ`]{2,25}\s*(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|QIZI|VICH|VNA))\b', text, re.IGNORECASE)
+    if m_pat:
+        clean_p = m_pat.group(1).upper()
+        clean_p = re.sub(r'^[^A-Za-zА-Яа-я]+', '', clean_p).strip()
+        names['patronymic'] = clean_p
+        
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     
+    blacklist_words = {
+        'FAMILIYASI', 'SURNAME', 'ISMI', 'GIVEN', 'NAMES', 'OTASINING', 'TUGILGAN',
+        'BERILGAN', 'AMAL', 'QILISH', 'MUDDATI', 'RESPUBLIKASI', 'SHAXS', 'GUVOHNOMASI',
+        'PASPORT', 'PASSPORT', 'FUQAROLIGI', 'CITIZENSHIP', 'NATIONALITY', 'JINSI', 'SEX',
+        'PLACE', 'OF', 'BIRTH', 'ISSUE', 'AUTHORITY', 'UZBEKISTAN', 'UZBEK', 'UZB', 'EEE',
+        'SANASI', 'DATE', 'KARTA', 'RAQAMI', 'CARD', 'NUMBER', 'REPUBLIC', 'QINSI',
+        'EFT', 'ЗЕХ', 'ПАС', 'PAS', 'ZEX', 'ERKAK', 'AYOL', 'MALE', 'FEMALE', 'МУЖ', 'ЖЕН', 'АКУЛА'
+    }
+    
     for i, line in enumerate(lines):
-        line_clean = line.replace("'", '').replace('ʻ', '').replace('ʼ', '')
+        line_norm = ''
+        for ch in line:
+            line_norm += CYR_TO_LAT.get(ch, ch)
+        line_clean = line_norm.replace("'", '').replace('ʻ', '').replace('ʼ', '')
         
-        # Surname
-        if re.search(r'familiyasi|surname|fairoiliyasi|farmiiyasi', line_clean, re.IGNORECASE) and not names['surname']:
-            m = re.search(r'(?:familiyasi|surname|fairoiliyasi|farmiiyasi)[:\s/]+([A-ZА-Я]{3,30})', line, re.IGNORECASE)
-            if m:
-                cand = m.group(1).upper()
-                if not cand.startswith(('FAM', 'FAR', 'FAI', 'SUR')):
-                    names['surname'] = cand
-            elif i + 1 < len(lines):
-                cand = lines[i + 1].strip().split()[0]
-                if cand.isalpha() and len(cand) >= 3 and not cand.upper().startswith(('FAM', 'FAR', 'FAI', 'SUR', 'ISM', 'GIV', 'OTA', 'UZB')):
-                    names['surname'] = cand.upper()
-                    
-        # Given names
-        elif re.search(r'ismi|given\s*names|namli', line_clean, re.IGNORECASE) and not names['first_name']:
-            m = re.search(r'(?:ismi|given\s*names|namli)[:\s/]+([A-ZА-Я]{3,30})', line, re.IGNORECASE)
-            if m:
-                cand = m.group(1).upper()
-                if not cand.startswith(('GIV', 'NAM', 'ISM', 'OTA')):
-                    names['first_name'] = cand
-            elif i + 1 < len(lines):
-                cand = lines[i + 1].strip().split()[0]
-                if cand.isalpha() and len(cand) >= 3 and not cand.upper().startswith(('GIV', 'NAM', 'ISM', 'OTA', 'TUG', 'UZB')):
-                    names['first_name'] = cand.upper()
-                    
-        # Patronymic
-        elif re.search(r'otasining\s*ismi|patranyfak|patron', line_clean, re.IGNORECASE) and not names['patronymic']:
-            m = re.search(r'(?:otasining\s*ismi|patranyfak|patron)[:\s/]+([A-ZА-Я]{3,30}(?:\s+O[\'ʻʼ`]?G[\'ʻʼ`]?LI)?)', line, re.IGNORECASE)
-            if m:
-                names['patronymic'] = m.group(1).upper()
-            elif i + 1 < len(lines):
-                cand = lines[i + 1].strip()
-                if len(cand) >= 3 and not cand.upper().startswith('TUG'):
-                    names['patronymic'] = cand.upper()
-                    
-    # Heuristic for old passport where names appear right after country header
+        # ── Surname ──────────────────────────────────────────────────────────
+        if re.search(r'familiyasi|surname|fairoiliyasi|farmiiyasi|zurna', line_clean, re.IGNORECASE) and not names['surname']:
+            for step in range(1, 4):
+                if i + step < len(lines):
+                    tokens = [_clean_word(w) for w in lines[i + step].split()]
+                    for tok in tokens:
+                        if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
+                            names['surname'] = tok.upper()
+                            break
+                    if names['surname']:
+                        break
+                        
+        # ── Given Names ──────────────────────────────────────────────────────
+        elif re.search(r'\bismi\b|given\s*names|namli', line_clean, re.IGNORECASE) and not names['first_name']:
+            # ID Card Front heuristic: If surname not found yet, line i-1 right above 'ismi' is Surname
+            if not names['surname'] and i > 0:
+                prev_tokens = [_clean_word(w) for w in lines[i - 1].split()]
+                for tok in prev_tokens:
+                    if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
+                        names['surname'] = tok.upper()
+                        break
+                        
+            for step in range(1, 4):
+                if i + step < len(lines):
+                    tokens = [_clean_word(w) for w in lines[i + step].split()]
+                    for tok in tokens:
+                        if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
+                            names['first_name'] = tok.upper()
+                            break
+                    if names['first_name']:
+                        break
+                        
+        # ── Patronymic fallback ──────────────────────────────────────────────
+        elif re.search(r'otasining\s*ismi|patranyfik|patranyinik|patron', line_clean, re.IGNORECASE) and not names['patronymic']:
+            for step in range(1, 4):
+                if i + step < len(lines):
+                    cand = lines[i + step].strip()
+                    clean_cand = re.sub(r'^[^A-Za-zА-Яа-я]+', '', cand).strip()
+                    if len(clean_cand) >= 3 and not any(clean_cand.upper().startswith(bw) for bw in ['TUG', 'BER', 'AMA']):
+                        names['patronymic'] = clean_cand.upper()
+                        break
+                        
+    # Fallback for Biometric Passport top section (SAIDXONOV, DADAXON)
     if not names['surname']:
         for i, line in enumerate(lines):
             if 'RESPUBLIKASI' in line.upper() and i + 1 < len(lines):
-                cand_sur = lines[i + 1].strip().split()[0]
-                if cand_sur.isalpha() and len(cand_sur) >= 4 and cand_sur.upper() not in ['PASSPORT', 'SHAXS']:
-                    names['surname'] = cand_sur.upper()
+                tok = _clean_word(lines[i + 1].split()[0])
+                if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
+                    names['surname'] = tok.upper()
                     if i + 2 < len(lines):
-                        cand_name = lines[i + 2].strip().split()[0]
-                        if cand_name.isalpha() and len(cand_name) >= 3:
-                            names['first_name'] = cand_name.upper()
-                            
+                        tok2 = _clean_word(lines[i + 2].split()[0])
+                        if len(tok2) >= 3 and tok2.isalpha() and tok2.upper() not in blacklist_words:
+                            names['first_name'] = tok2.upper()
+                    break
+                    
     return names
 
 
@@ -521,22 +626,68 @@ def _extract_other_fields(text: str) -> Dict[str, Optional[str]]:
         'issuing_authority': None,
     }
     
-    if re.search(r'\b(ERKAK|MALE|МУЖ)\b', text, re.IGNORECASE):
+    # ── Gender (normalize Cyrillic lookalikes like ЕВКАК) ──────────────────
+    text_cyr_norm = ''
+    for ch in text:
+        text_cyr_norm += CYR_TO_LAT.get(ch, ch)
+        
+    if re.search(r'\b(ERKAK|MALE|МУЖ)\b', text_cyr_norm, re.IGNORECASE) or 'ERKA)' in text or re.search(r'\bERKA\b', text_cyr_norm):
         fields['gender'] = 'Erkak'
-    elif re.search(r'\b(AYOL|FEMALE|ЖЕН)\b', text, re.IGNORECASE):
+    elif re.search(r'\b(AYOL|FEMALE|ЖЕН)\b', text_cyr_norm, re.IGNORECASE):
         fields['gender'] = 'Ayol'
         
+    # ── Nationality ───────────────────────────────────────────────────────
     if re.search(r'O[\'ʻʼ`]?ZBEK|UZBEK|UZB', text, re.IGNORECASE):
         fields['nationality'] = "O'zbekiston"
         
-    m_place = re.search(r'(?:tug[\'ʻʼ`]?ilgan\s*joyi|place\s*of\s*birth)[:\s/]+([^\n]{3,50})', text, re.IGNORECASE)
-    if m_place:
-        fields['birth_place'] = m_place.group(1).strip()
-        
-    m_auth = re.search(r'(?:berilgan\s*joyi|place\s*of\s*issue|issuing\s*authority)[:\s/]+([^\n]{3,60})', text, re.IGNORECASE)
-    if m_auth:
-        fields['issuing_authority'] = m_auth.group(1).strip()
-        
+    # ── Birth Place ───────────────────────────────────────────────────────
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    blacklist_places = {'PLACE OF BIRTH', 'PLACE', 'OF', 'BIRTH', 'TUGILGAN', 'JOYI', 'SEX', 'M', 'F'}
+    
+    for i, l in enumerate(lines):
+        if re.search(r'tug[\'ʻʼ`]?ilgan\s*joyi|place\s*of\s*birth', l, re.IGNORECASE):
+            for step in range(1, 3):
+                if i + step < len(lines):
+                    cand = lines[i + step].strip()
+                    cand = re.sub(r'^[MF\s\W_]+', '', cand).strip()
+                    cand = re.sub(r'^[Eе]\s+', '', cand).strip()
+                    if cand and cand.upper() not in blacklist_places and len(cand) >= 3:
+                        fields['birth_place'] = cand.upper()
+                        break
+            if fields['birth_place']:
+                break
+                
+    if not fields['birth_place']:
+        m_toponym = re.search(r'\b([A-ZА-Я\s]{3,30}\s+(?:TUMANI|VILOYATI|SHAHRI|REGION|DISTRICT))\b', text, re.IGNORECASE)
+        if m_toponym:
+            cand_top = re.sub(r'^[MF\s\W_]+', '', m_toponym.group(1)).strip()
+            fields['birth_place'] = cand_top.upper()
+
+    # ── Issuing Authority ─────────────────────────────────────────────────
+    for i, l in enumerate(lines):
+        if re.search(r'kim\s*tomonidan\s*berilgan|authority|personallashtirish', l, re.IGNORECASE):
+            auth_parts = []
+            for step in range(1, 3):
+                if i + step < len(lines):
+                    cand = lines[i + step].strip()
+                    clean_c = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN|DATE\s*OF\s*ISSUE)[^\n]*', '', cand, flags=re.IGNORECASE).strip()
+                    clean_c = re.sub(r'[\d.]+$', '', clean_c).strip()
+                    clean_c = re.sub(r'\b(?:eee|ёши|e)\b', '', clean_c, flags=re.IGNORECASE).strip()
+                    if len(clean_c) >= 3 and not clean_c.upper().startswith('SHAXSIY'):
+                        auth_parts.append(clean_c)
+            if auth_parts:
+                fields['issuing_authority'] = ' '.join(auth_parts).upper()
+                break
+                
+    if not fields['issuing_authority']:
+        m_auth = re.search(r'([A-ZА-Я\s]{4,40}\s*(?:IIB|MIIB|ROO|BOSHQARMASI|VILOYATI|CENTRE|CENTER|AUTHORITY)[^\n]*)', text, re.IGNORECASE)
+        if m_auth:
+            clean_auth = m_auth.group(1).strip()
+            clean_auth = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN)\s*', '', clean_auth, flags=re.IGNORECASE).strip()
+            clean_auth = re.sub(r'\b(?:eee|ёши)\b', '', clean_auth, flags=re.IGNORECASE).strip()
+            if len(clean_auth) >= 6:
+                fields['issuing_authority'] = clean_auth.upper()
+            
     return fields
 
 
@@ -550,8 +701,8 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
     
     Features:
     - Safe deskew (guaranteed no 90-degree flips)
-    - Targeted MRZ ROI recognition with 100% accuracy on TD1 and TD3
-    - Fast clean grayscale preprocessing (1.5 - 2.5s latency)
+    - Targeted MRZ ROI recognition (TD1 and TD3, extracts 14-digit JSHSHIR from passports)
+    - Clean text preprocessing
     - Multi-field fusion between MRZ and textual regex
     """
     t_start = time.time()
@@ -578,14 +729,14 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         rotated_img, angle = _deskew_safe(img)
         result['debug']['deskew_angle'] = angle
         
-        # 3. Targeted MRZ extraction from bottom ROI
+        # 3. Targeted MRZ extraction
         mrz_data, raw_mrz_text = _extract_mrz_from_image(rotated_img)
         result['mrz'] = mrz_data
         
         # 4. Clean Grayscale enhancement for document text
         enhanced = _prepare_main_text_image(rotated_img)
         
-        # 5. Main text OCR (single high-performance call)
+        # 5. Main text OCR
         main_text = pytesseract.image_to_string(enhanced, lang=LANG_MAIN, config='--psm 6')
         result['raw_text'] = main_text
         
@@ -612,7 +763,7 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
             'raw_lines': [l.strip() for l in main_text.split('\n') if l.strip()]
         }
         
-        # 7. Merge MRZ data (MRZ has highest legal precision when valid)
+        # 7. Merge MRZ data (MRZ has highest legal precision)
         if mrz_data:
             result['debug']['mrz_format'] = mrz_data.get('format')
             
@@ -621,7 +772,6 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                 if not val:
                     continue
                 if key == 'document_number':
-                    # Only accept MRZ doc number if it matches valid 2 letters + 7 digits
                     if re.match(r'^[A-Z]{2}\d{7}$', val):
                         structured[key] = val
                     elif not structured.get('document_number'):
@@ -632,12 +782,19 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                         structured[key] = clean_sur
                 elif key == 'first_name':
                     clean_first = re.sub(r'^(?:ISMI|GIVEN|NAMES)\s*', '', val, flags=re.IGNORECASE).strip()
-                    if clean_first and clean_first.replace(' ', '').isalpha() and len(clean_first) >= 3:
-                        structured[key] = clean_first
+                    if clean_first and clean_first.replace(' ', '').isalpha() and len(clean_first) >= 3 and clean_first != 'EEE':
+                        body_first = structured.get('first_name')
+                        clean_first = re.sub(r'[<EK]+$', '', clean_first).strip()
+                        if body_first and body_first != 'EEE' and clean_first.startswith(body_first):
+                            structured[key] = body_first
+                        else:
+                            structured[key] = clean_first
                 else:
                     if val and not structured.get(key):
                         structured[key] = val
-                    
+                    elif val and key in ['jshshir', 'birth_date', 'expiry_date', 'gender', 'nationality']:
+                        structured[key] = val
+                        
         # 8. Document side detection heuristic
         if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
             result['detected_side'] = 'id_back'

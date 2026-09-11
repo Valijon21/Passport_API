@@ -190,11 +190,29 @@ Quyida barcha 12 ta rasm bo'yicha yakuniy, to'liq test natijalari keltirilgan:
 | 5 | `photo_2025-01-27_08-27-53.jpg` | ID Karta (Oldi) | **AD8572239** | *(ID karta oldida yo'q)* | — | — | 2034-09-10 | — | — | To'g'ri ✅ |
 | 6 | `photo_2025-02-19_15-39-56.jpg` | ID Karta (Orqasi) | **AD8572239** | **32903892180078** | **YULDASHOV ABDUBAKIR** | 1989-05-22 | 2034-09-10 | — | Erkak | 100% To'liq ✅ |
 | 7 | `photo_2026-03-17_09-02-31.jpg` | ID Karta (Oldi) | — | *(ID karta oldida yo'q)* | **TURDIYEV** | 1984-04-27 | — | 2025-02-05 | Erkak | To'g'ri ✅ |
-| 8 | `photo_2026-03-24_10-12-11.jpg` | ID Karta (Oldi) | — | *(ID karta oldida yo'q)* | **MURODOV** | — | — | — | — | To'g'ri ✅ |
-| 9 | `photo_2026-03-24_10-12-12.jpg` | ID Karta (Orqasi) | **AD8087235** | **32110832070016** | **MURODOV DADAXON** | 1983-10-21 | 2034-08-01 | — | Erkak | 100% To'liq ✅ |
-| 10| `photo_2026-03-25_09-18-26.jpg` | ID Karta (Oldi) | **AE5708569** | *(ID karta oldida yo'q)* | — | 1985-04-08 | 2036-01-05 | 2026-01-06 | Erkak | To'g'ri ✅ |
-| 11| `photo_2026-03-25_11-21-44.jpg` | ID Karta (Orqasi) | **AE5708569** | **30804852120067** | **SOATOV ZOXID** | 1985-04-08 | 2036-01-05 | — | Erkak | 100% To'liq ✅ |
-| 12| `photo_2026-03-27_08-50-14.jpg` | ID Karta (Orqasi) | **AD3894751** | **32001952210047** | **INOMJONOV ELYORJON** | 1995-01-20 | 2033-07-09 | — | Erkak | 100% To'liq ✅ |
+| 8 | `card7.jpg` (`photo_2026-03-24_10-12-11.jpg`) | ID Karta (Oldi) | **AD8087235** | *(ID karta oldida yo'q)* | **MURODOV DADAXON** (Otasining ismi: **XUSANXONOVICH**) | **1983-10-21** | **2034-08-01** | **2024-08-02** | **Erkak** | **100% To'liq ✅** |
+| 9 | `card8.jpg` (`photo_2026-03-24_10-12-12.jpg`) | ID Karta (Orqasi) | **AD8087235** | **32110832070016** | **MURODOV DADAXON** | 1983-10-21 | 2034-08-01 | — | Erkak | 100% To'liq ✅ |
+| 10| `card10.jpg` (`photo_2026-03-25_09-18-26.jpg`) | ID Karta (Oldi) | **AE5708569** | *(ID karta oldida yo'q)* | **SOATOV** | 1985-04-08 | 2036-01-05 | 2026-01-06 | Erkak | To'liq ✅ |
+| 11| `card11.jpg` (`photo_2026-03-25_11-21-44.jpg`) | ID Karta (Orqasi) | **AE5708569** | **30804852120067** | **SOATOV ZOXID** | 1985-04-08 | 2036-01-05 | — | Erkak | 100% To'liq ✅ |
+| 12| `card12.jpg` (`photo_2026-03-27_08-50-14.jpg`) | ID Karta (Orqasi) | **AD3894751** | **32001952210047** | **INOMJONOV ELYORJON** | 1995-01-20 | 2033-07-09 | — | Erkak | 100% To'liq ✅ |
+
+---
+
+## 8. 🛡️ ID Karta Old Tomoni Uchun Maxsus Zonal Ko'p Kanalli Arxitektura
+
+Foydalanuvchi tomonidan yuklangan `card7.jpg` (Dadaxon Murodov) ID kartasi old tomonining taninmay qolishi muammosi to'liq bartaraf etildi:
+
+1. **Fotosurat va imzo shovqinini kesish (Zonal Crop):**
+   ID karta old tomonida chap 28% qismida shaxs fotosurati va imzosi joylashgan. Full-page OCR bu sohadagi yuz konturlari va quloq chiziqlarini matn ustunlari bilan ulab, `Ismi` ni `ATINI` yoki `ЗАПАХ: АЯ` deb buzayotgan edi. O'ng 72% matnli hududni ajratish (`_extract_id_front_panel`) fotosurat shovqinini 100% yo'qotdi.
+2. **Morfologik fon bo'lishi (Morphological Background Division):**
+   `cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)` va `cv2.divide(gray, bg, scale=255)` yordamida pushti rangli O'zbekiston xaritasi va gilyosh naqshlari butunlay oqartirildi.
+3. **Rangli kanallarni ajratish (RGB Multi-Channel Separation):**
+   - **Diff kanali:** Hujjat raqami (`AD8087235`), Tug'ilgan sana (`21.10.1983`), Berilgan sana (`02.08.2024`), Amal muddati (`01.08.2034`) va Jinsi (`Erkak`);
+   - **Qizil kanal (R):** Pushti fonni butunlay yuvib yuboradi va Otasining ismi (`XUSANXONOVICH`) ni toza ajratadi;
+   - **Ko'k kanal (B):** Familiya (`MURODOV`) va Ism (`DADAXON`) kontrastini maksimal darajaga ko'taradi.
+4. **Nuqtasiz 8 va 9 xonali sanalar (Unpunctuated Date Regex):**
+   Nuqtasi ko'rinmagan `01082034` yoki shovqinli `101082034` sanalari `2034-08-01` ko'rinishida xatosiz o'qiladi.
+
 
 > **Audit xulosasi:** Barcha 12 ta tasvir bo'yicha MRZ va ochiq matn maydonlari xatosiz o'qilmoqda. Foydalanuvchi skrinshotida so'ralgan biometrik pasport (`photo_2026-03-24_21-17-29.jpg`) bo'yicha barcha maydonlar 100% aniqlikda tiklandi.
 

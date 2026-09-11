@@ -164,9 +164,15 @@ def _extract_id_front_panel(img: np.ndarray) -> str:
     Eliminates portrait photo/signature distortion and washes out the pink map of Uzbekistan.
     """
     h, w = img.shape[:2]
+    # Standardize scale for low-resolution/cropped camera captures (e.g. h < 1100)
+    if h < 1100:
+        scale = 1200 / h
+        img = cv2.resize(img, (int(w * scale), 1200), interpolation=cv2.INTER_CUBIC)
+        h, w = img.shape[:2]
     
     # Pass 1: Panel at x = 0.28*w (tight text panel cleanly excluding portrait photo edges)
     panel28 = img[:, int(w * 0.28):]
+
     gray28 = cv2.cvtColor(panel28, cv2.COLOR_BGR2GRAY)
     k25 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
     bg28 = cv2.morphologyEx(gray28, cv2.MORPH_DILATE, k25)
@@ -580,18 +586,32 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
     }
     
     # 1. Look for Patronymic across full text (supports Uzbek apostrophes and Slavic suffixes)
-    m_pat = re.search(r'\b([A-Za-zА-Яа-я][A-Za-zА-Яа-я\'ʻʼ`\s]{2,25}\s*(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|QIZI|VICH|VNA|OVICH|EVICH|OVNA|EVNA))\b', text, re.IGNORECASE)
+    m_pat = re.search(r'\b([A-Za-zА-Яа-я][A-Za-zА-Яа-я\'ʻʼ`\t ]{2,25}\s*(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|QIZI|VICH|VNA|OVICH|EVICH|OVNA|EVNA))\b', text, re.IGNORECASE)
     if m_pat:
         clean_p = m_pat.group(1).upper()
+        if '\n' in clean_p:
+            clean_p = clean_p.split('\n')[-1].strip()
         clean_p = re.sub(r'^[^A-ZА-Яa-zа-я]+', '', clean_p).strip()
-        # Clean leading noise letter before XUSAN/XASAN e.g. SKUSANXONOVICH -> XUSANXONOVICH
-        clean_p = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_p)
-        clean_p = re.sub(r'^KUSAN', 'XUSAN', clean_p)
-        clean_p = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_p)
-        clean_p = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_p)
-        names['patronymic'] = clean_p
+        clean_p = re.sub(r'^[A-Za-z]\s+', '', clean_p)
+        p_words = clean_p.split()
+        if 1 <= len(p_words) <= 2 and not any(st in clean_p for st in ['BERIL', 'SANASI', 'DATE', 'ISSUE', 'FUQAR', 'CITIZEN', 'TUGIL', 'RESPUBL']):
+            # Clean leading noise letter before XUSAN/XASAN e.g. SKUSANXONOVICH -> XUSANXONOVICH
+            clean_p = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_p)
+            clean_p = re.sub(r'^KUSAN', 'XUSAN', clean_p)
+            clean_p = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_p)
+            clean_p = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_p)
+            names['patronymic'] = clean_p
         
     lines = [l.strip() for l in text.split('\n') if l.strip()]
+    
+    label_stems = [
+        'PATR', 'FAMIL', 'SURNAME', 'GIVEN', 'GIVE', 'NAME', 'ISMI', 'SMI', 'OTAS', 'OTD', 'OTS',
+        'TUGIL', 'BERIL', 'AMAL', 'QILISH', 'RESPUBL', 'GUVOH', 'PASPORT', 'PASSP', 'FUQAR', 
+        'CITIZEN', 'NATION', 'JINSI', 'KARTA', 'CARD', 'MUDDAT', 'AUTHOR', 'PLACE', 
+        'BIRTH', 'ISSUE', 'REPUBLIC', 'SHAXS', 'SANASI', 'DATE', 'USER', 'ATINI'
+    ]
+
+
     
     blacklist_words = {
         'FAMILIYASI', 'SURNAME', 'ISMI', 'GIVEN', 'NAMES', 'NAME', 'OTASINING', 'TUGILGAN',
@@ -601,7 +621,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         'SANASI', 'DATE', 'KARTA', 'RAQAMI', 'CARD', 'NUMBER', 'REPUBLIC', 'QINSI',
         'EFT', 'ЗЕХ', 'ПАС', 'PAS', 'ZEX', 'ERKAK', 'AYOL', 'MALE', 'FEMALE', 'МУЖ', 'ЖЕН', 'АКУЛА',
         'PATRONYMIC', 'PATRONYMICS', 'PATRONYMIICS', 'ATINI', 'USER', 'AQVOANAUNUY',
-        'FATNILIYAST', 'FATNILIYASI', 'FARMIYAST', 'ISINI'
+        'FATNILIYAST', 'FATNILIYASI', 'FARMIYAST', 'ISINI', 'ETH', 'SMI'
     }
     
     for i, line in enumerate(lines):
@@ -611,13 +631,15 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         line_clean = line_norm.replace("'", '').replace('ʻ', '').replace('ʼ', '')
         
         # ── Surname ──────────────────────────────────────────────────────────
-        if re.search(r'familiyasi|surname|fairoiliyasi|farmiiyasi|fatniliyast|fatniliyasi|zurna', line_clean, re.IGNORECASE) and not names['surname']:
+        if re.search(r'famili|surname|fairo|farmi|fatnili|farui|farni|zurna', line_clean, re.IGNORECASE) and not names['surname']:
             for step in range(1, 4):
                 if i + step < len(lines):
                     tokens = [_clean_word(w) for w in lines[i + step].split()]
                     for tok in tokens:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
-                        if len(tok_clean) >= 3 and tok_clean.isalpha() and tok_clean not in blacklist_words:
+                        if (len(tok_clean) >= 3 and tok_clean.isalpha() and 
+                            not any(st in tok_clean for st in label_stems) and 
+                            tok_clean not in blacklist_words):
                             names['surname'] = tok_clean
                             break
                     if names['surname']:
@@ -630,7 +652,9 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                 prev_tokens = [_clean_word(w) for w in lines[i - 1].split()]
                 for tok in prev_tokens:
                     tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
-                    if len(tok_clean) >= 3 and tok_clean.isalpha() and tok_clean not in blacklist_words:
+                    if (len(tok_clean) >= 3 and tok_clean.isalpha() and 
+                        not any(st in tok_clean for st in label_stems) and 
+                        tok_clean not in blacklist_words):
                         names['surname'] = tok_clean
                         break
                         
@@ -640,7 +664,9 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                     for tok in tokens:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
                         tok_clean = re.sub(r'\bDADAKON\b', 'DADAXON', tok_clean)
-                        if len(tok_clean) >= 3 and tok_clean.isalpha() and tok_clean not in blacklist_words:
+                        if (len(tok_clean) >= 3 and tok_clean.isalpha() and 
+                            not any(st in tok_clean for st in label_stems) and 
+                            tok_clean not in blacklist_words):
                             names['first_name'] = tok_clean
                             break
                     if names['first_name']:
@@ -652,14 +678,22 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
             for step in range(1, 4):
                 if i + step < len(lines):
                     cand = lines[i + step].strip()
+                    if '\n' in cand:
+                        cand = cand.split('\n')[-1].strip()
                     clean_cand = re.sub(r'^[^A-Za-zА-Яа-я]+', '', cand).strip()
-                    if len(clean_cand) >= 3 and not any(clean_cand.upper().startswith(bw) for bw in ['TUG', 'BER', 'AMA']):
+                    clean_cand = re.sub(r'^[A-Za-z]\s+', '', clean_cand)
+                    c_words = clean_cand.split()
+                    if (1 <= len(c_words) <= 2 and len(clean_cand) >= 4 and 
+                        re.search(r'(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|QIZI|VICH|VNA|OVICH|EVICH|OVNA|EVNA|OV|EV|OVA|EVA)\b', clean_cand, re.IGNORECASE) and
+                        not any(st in clean_cand.upper() for st in ['BERIL', 'SANASI', 'DATE', 'ISSUE', 'FUQAR', 'CITIZEN', 'TUGIL', 'RESPUBL', 'GUVOH', 'AMAL', 'MUDDAT'])):
                         clean_cand = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_cand.upper())
                         clean_cand = re.sub(r'^KUSAN', 'XUSAN', clean_cand)
                         clean_cand = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_cand)
                         clean_cand = re.sub(r'\bXUSANXOVICH\b', 'XUSANXONOVICH', clean_cand)
                         names['patronymic'] = clean_cand
                         break
+
+
                         
     # Fallback for Biometric Passport top section (SAIDXONOV, DADAXON)
     if not names['surname']:
@@ -866,7 +900,24 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                     elif val and key in ['jshshir', 'birth_date', 'expiry_date', 'gender', 'nationality']:
                         structured[key] = val
                         
+        # Fallback gender deduction from patronymic suffix and JSHSHIR
+        if not structured.get('gender'):
+            pat = structured.get('patronymic')
+            if pat:
+                p_up = pat.upper()
+                if re.search(r'(?:O[\'ʻʼ`]?G[\'ʻʼ`]?LI|VICH|OVICH|EVICH)\b', p_up):
+                    structured['gender'] = 'Erkak'
+                elif re.search(r'(?:QIZI|VNA|OVNA|EVNA)\b', p_up):
+                    structured['gender'] = 'Ayol'
+            jsh = structured.get('jshshir')
+            if not structured.get('gender') and jsh and len(jsh) == 14:
+                if jsh[0] in ('3', '5'):
+                    structured['gender'] = 'Erkak'
+                elif jsh[0] in ('4', '6'):
+                    structured['gender'] = 'Ayol'
+
         # 8. Document side detection heuristic
+
         if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
             result['detected_side'] = 'id_back'
         elif mrz_data and mrz_data.get('format') == 'TD3 (Passport 2-line)':

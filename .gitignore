@@ -1,4 +1,8 @@
-# Python
+# ==============================================================================
+#  Passport & ID Card OCR API — .gitignore
+# ==============================================================================
+
+# Python & Bytecode
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,37 +23,69 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.manifest
+*.spec
 
-# Virtual Environment
+# Virtual Environments
 venv/
 env/
 ENV/
+env.bak/
+venv.bak/
+.venv/
 backend/venv/
 
-# Django
+# Django & Database
 *.log
 logs/
 backend/logs/
+*.sqlite3
+*.sqlite3-journal
 db.sqlite3
 db.sqlite3-journal
 media/
 backend/media/
-.env
-backend/.env
 
-# IDE & OS
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+*.pem
+*.key
+
+# IDEs & Text Editors
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 *.sublime-project
 *.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# Operating System Files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# Temporary Test Files
+# Temporary / Scratch & Test Analysis Files
 *.tmp
 test_results.json
 detailed_analysis.json
 backend/deep_diagnostic.py
 backend/test_batch_ocr.py
 backend/test_sample.jpg
+
+# Sensitive Test Images (Personal Data Protection)
+# Keep the folder structure via .gitkeep and README, but ignore real citizen ID documents
+pasport_img/*
+!pasport_img/.gitkeep
+!pasport_img/README.md

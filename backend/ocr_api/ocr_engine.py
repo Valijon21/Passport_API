@@ -644,6 +644,27 @@ def _normalize_given_name(tok: Optional[str], surname: Optional[str] = None) -> 
     return c
 
 
+def _names_match_uzbek_translit(body_name: str, mrz_name: str) -> bool:
+    """
+    Check if body_name (Uzbek Latin, e.g. SAIDXONOV, DADAXON, ZOXID)
+    matches mrz_name (ICAO 9303 English transliteration, e.g. SAIDKHONOV, DADAKHON, ZOKHID).
+    """
+    if not body_name or not mrz_name:
+        return False
+    b = body_name.upper().strip()
+    m = mrz_name.upper().strip()
+    if b == m:
+        return True
+    if m.replace('KH', 'X') == b or b.replace('X', 'KH') == m:
+        return True
+    if m.replace('K', 'Q') == b or b.replace('Q', 'K') == m:
+        return True
+    b_no_apos = b.replace("'", "").replace("ʻ", "").replace("ʼ", "").replace("`", "")
+    if m == b_no_apos or m.replace('KH', 'X') == b_no_apos:
+        return True
+    return False
+
+
 def _is_strong_first_name(cand: Optional[str]) -> bool:
     if not cand:
         return False
@@ -774,18 +795,50 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         names['patronymic'] = clean_cand
                         break
 
-    # Fallback for Biometric Passport top section (SAIDXONOV, DADAKHON)
-    if not names['surname']:
-        for i, line in enumerate(lines):
-            if 'RESPUBLIKASI' in line.upper() and i + 1 < len(lines):
-                tok = _clean_word(lines[i + 1].split()[0])
-                if len(tok) >= 4 and tok.isalpha() and tok.upper() not in blacklist_words:
-                    names['surname'] = tok.upper()
-                    if i + 2 < len(lines):
-                        tok2 = _clean_word(lines[i + 2].split()[0])
-                        if len(tok2) >= 3 and tok2.isalpha() and tok2.upper() not in blacklist_words:
-                            names['first_name'] = tok2.upper()
-                    break
+    # ── Biometric Passport Uzbek National Section (SAIDXONOV, DADAXON, etc.) ────
+    # In Uzbekistan biometric passports (and dual-page passport photos), the top section
+    # is printed in native Uzbek Latin ('O'ZBEKISTON RESPUBLIKASI'), containing:
+    # 1. Familiyasi: e.g. SAIDXONOV (Uzbek 'X', NOT English transliterated 'SAIDKHONOV')
+    # 2. Ismi: e.g. DADAXON (Uzbek 'X', NOT English transliterated 'DADAKHON')
+    # 3. Otasining ismi: e.g. JO'RAXON O'G'LI
+    respub_idx = -1
+    otas_idx = -1
+    for idx, line in enumerate(lines):
+        lu = line.upper()
+        if respub_idx == -1 and 'RESPUBLIKASI' in lu and not any(k in lu for k in ['REPUBLIC', 'PASPORT', 'PASSPORT']):
+            respub_idx = idx
+        if otas_idx == -1 and respub_idx != -1 and re.search(r'otasining\s*is[mn]?[i1]?', lu, re.IGNORECASE):
+            otas_idx = idx
+            break
+
+    if respub_idx != -1 and otas_idx != -1 and otas_idx > respub_idx:
+        uzb_sur = None
+        uzb_first = None
+        for idx in range(respub_idx + 1, otas_idx):
+            line = lines[idx]
+            for w in line.split():
+                clean_w = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', w).upper()
+                if len(clean_w) >= 3 and clean_w.isalpha() and clean_w not in blacklist_words:
+                    if not uzb_sur and re.search(r'(?:OV|EV|OVA|EVA|IY|IYA)$', clean_w):
+                        uzb_sur = clean_w
+                    elif not uzb_first and clean_w not in [uzb_sur, 'ERKAK', 'AYOL', 'RESPUBLIKASI']:
+                        if len(clean_w) >= 3 and not re.search(r'(?:VICH|EVICH|OVNA|EVNA|OGLI|QIZI)$', clean_w):
+                            uzb_first = _normalize_given_name(clean_w, uzb_sur)
+        if uzb_sur:
+            names['surname'] = uzb_sur
+        if uzb_first:
+            names['first_name'] = uzb_first
+
+    # Prefer genuine Uzbek 'X' over English transliterated 'KH' if present in document text
+    if names['surname'] and 'KH' in names['surname']:
+        x_cand = names['surname'].replace('KH', 'X')
+        if re.search(r'\b' + re.escape(x_cand) + r'\b', text, re.IGNORECASE):
+            names['surname'] = x_cand
+
+    if names['first_name'] and 'KH' in names['first_name']:
+        x_cand = names['first_name'].replace('KH', 'X')
+        if re.search(r'\b' + re.escape(x_cand) + r'\b', text, re.IGNORECASE):
+            names['first_name'] = x_cand
 
     # Post-processing normalizations
     if names['surname'] in ['SOATOY', 'SOATO', 'SOATOYY']:
@@ -836,6 +889,7 @@ def _extract_other_fields(text: str) -> Dict[str, Optional[str]]:
         'birth_place': None,
         'issuing_authority': None,
     }
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
     
     # ── Gender (normalize Cyrillic lookalikes like ЕВКАК) ──────────────────
     text_cyr_norm = ''
@@ -847,32 +901,66 @@ def _extract_other_fields(text: str) -> Dict[str, Optional[str]]:
     elif re.search(r'\b(AYOL|FEMALE|ЖЕН)\b', text_cyr_norm, re.IGNORECASE):
         fields['gender'] = 'Ayol'
         
-    # ── Nationality ───────────────────────────────────────────────────────
-    if re.search(r'O[\'ʻʼ`]?ZBEK|UZBEK|UZB', text, re.IGNORECASE):
-        fields['nationality'] = "O'zbekiston"
+    # ── Nationality / Millati ─────────────────────────────────────────────
+    # On biometric passport: 'MILLATI: O'ZBEK' (ethnic nationality),
+    # while ID card has 'Fuqaroligi / Nationality: O'ZBEKISTON'.
+    for l in lines:
+        if re.search(r'\bMILLAT[I1]?\b', l, re.IGNORECASE):
+            m_mil = re.search(r'\b(O[\'ʻʼ`]?ZBEK|RUS|QOZOQ|TOJIK|TATAR|QORAQALPOQ)\b', l, re.IGNORECASE)
+            if m_mil:
+                fields['nationality'] = "O'zbek"
+                break
+    if not fields['nationality']:
+        for i, l in enumerate(lines):
+            if re.search(r'\bMILLAT[I1]?\b', l, re.IGNORECASE) and i + 1 < len(lines):
+                m_mil = re.search(r'\b(O[\'ʻʼ`]?ZBEK|RUS|QOZOQ|TOJIK|TATAR|QORAQALPOQ)\b', lines[i + 1], re.IGNORECASE)
+                if m_mil:
+                    fields['nationality'] = "O'zbek"
+                    break
+    if not fields['nationality']:
+        if re.search(r'\bO[\'ʻʼ`]?ZBEK\b', text, re.IGNORECASE) and not re.search(r'O[\'ʻʼ`]?ZBEKISTON\s+RESPUBLIKASI', text, re.IGNORECASE):
+            fields['nationality'] = "O'zbek"
+        elif re.search(r'O[\'ʻʼ`]?ZBEKISTON|UZBEKISTAN|UZB', text, re.IGNORECASE):
+            fields['nationality'] = "O'zbekiston"
         
     # ── Birth Place ───────────────────────────────────────────────────────
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    blacklist_places = {'PLACE OF BIRTH', 'PLACE', 'OF', 'BIRTH', 'TUGILGAN', 'JOYI', 'SEX', 'M', 'F'}
-    
-    for i, l in enumerate(lines):
-        if re.search(r'tug[\'ʻʼ`]?ilgan\s*joyi|place\s*of\s*birth', l, re.IGNORECASE):
-            for step in range(1, 3):
-                if i + step < len(lines):
-                    cand = lines[i + step].strip()
-                    cand = re.sub(r'^[MF\s\W_]+', '', cand).strip()
-                    cand = re.sub(r'^[Eе]\s+', '', cand).strip()
-                    if cand and cand.upper() not in blacklist_places and len(cand) >= 3:
-                        fields['birth_place'] = cand.upper()
-                        break
-            if fields['birth_place']:
+    toponym_blacklist = {
+        'KIM', 'TOMONIDAN', 'BERILGAN', 'RESPUBLIKASI', 'IIB', 'MIIB',
+        'BOSHQARMASI', 'AUTHORITY', 'CENTRE', 'PASSPORT', 'PASPORT', 'SHAXSIY', 'IMZO'
+    }
+
+    # Priority 1: Direct district/city/region toponym on passport or ID card (e.g. 'POP TUMANI', 'CHUST TUMANI')
+    for l in lines:
+        m_dist = re.search(r'\b([A-Za-zА-Яа-я\'ʻʼ`\s-]{3,25}\s+(?:TUMANI|SHAHRI|VILOYATI))\b', l, re.IGNORECASE)
+        if m_dist:
+            cand_dist = m_dist.group(1).strip().upper()
+            cand_dist = re.sub(r'^[MF\s\W_\d]+', '', cand_dist).strip()
+            if not any(sw in cand_dist for sw in toponym_blacklist) and len(cand_dist) >= 5:
+                fields['birth_place'] = cand_dist
                 break
-                
+
+    if not fields['birth_place']:
+        blacklist_places = {'PLACE OF BIRTH', 'PLACE', 'OF', 'BIRTH', 'TUGILGAN', 'JOYI', 'SEX', 'M', 'F'}
+        for i, l in enumerate(lines):
+            if re.search(r'tug[\'ʻʼ`]?ilgan\s*joyi|place\s*of\s*birth', l, re.IGNORECASE):
+                for step in range(1, 3):
+                    if i + step < len(lines):
+                        cand = lines[i + step].strip()
+                        cand = re.sub(r'^[MF\s\W_]+', '', cand).strip()
+                        cand = re.sub(r'^[Eе]\s*|^(?:ENAMANGANN|ENAMANGAN)\b', 'NAMANGAN', cand, flags=re.IGNORECASE).strip()
+                        if cand and cand.upper() not in blacklist_places and len(cand) >= 3:
+                            fields['birth_place'] = cand.upper()
+                            break
+                if fields['birth_place']:
+                    break
+
     if not fields['birth_place']:
         m_toponym = re.search(r'\b([A-ZА-Я\s]{3,30}\s+(?:TUMANI|VILOYATI|SHAHRI|REGION|DISTRICT))\b', text, re.IGNORECASE)
         if m_toponym:
             cand_top = re.sub(r'^[MF\s\W_]+', '', m_toponym.group(1)).strip()
-            fields['birth_place'] = cand_top.upper()
+            cand_top = re.sub(r'^[Eе]\s*|^(?:ENAMANGANN|ENAMANGAN)\b', 'NAMANGAN', cand_top, flags=re.IGNORECASE).strip()
+            if not any(sw in cand_top for sw in toponym_blacklist):
+                fields['birth_place'] = cand_top.upper()
 
     # ── Issuing Authority ─────────────────────────────────────────────────
     for i, l in enumerate(lines):
@@ -1002,15 +1090,25 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                 elif key == 'surname':
                     clean_sur = re.sub(r'^(?:FAMILIYASI|FARMIIYASI|FAIRIOILIYASI|SURNAME)\s*', '', val, flags=re.IGNORECASE).strip()
                     if clean_sur and clean_sur.replace(' ', '').isalpha() and len(clean_sur) >= 3:
-                        structured[key] = clean_sur
+                        body_sur = structured.get('surname')
+                        if body_sur and _names_match_uzbek_translit(body_sur, clean_sur):
+                            # Preserve genuine Uzbek Latin spelling with 'X' (e.g. SAIDXONOV)
+                            pass
+                        elif not body_sur or body_sur in ['SOATOY', 'SOATO']:
+                            structured[key] = clean_sur
+                        elif not clean_sur.startswith(body_sur) and len(clean_sur) > len(body_sur) and 'X' not in body_sur:
+                            structured[key] = clean_sur
                 elif key == 'first_name':
                     clean_first = re.sub(r'^(?:ISMI|GIVEN|NAMES)\s*', '', val, flags=re.IGNORECASE).strip()
                     if clean_first and clean_first.replace(' ', '').isalpha() and len(clean_first) >= 3 and clean_first != 'EEE':
                         body_first = structured.get('first_name')
                         clean_first = re.sub(r'[<EK]+$', '', clean_first).strip()
-                        if body_first and body_first != 'EEE' and clean_first.startswith(body_first):
+                        if body_first and _names_match_uzbek_translit(body_first, clean_first):
+                            # Preserve genuine Uzbek Latin spelling with 'X' (e.g. DADAXON)
+                            pass
+                        elif body_first and body_first != 'EEE' and clean_first.startswith(body_first):
                             structured[key] = body_first
-                        else:
+                        elif not body_first or body_first == 'EEE':
                             structured[key] = clean_first
                 else:
                     if val and not structured.get(key):
@@ -1038,6 +1136,9 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
 
         if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
             result['detected_side'] = 'id_back'
+            # Uzbekistan TD1 ID card back side never contains birth_place or patronymic
+            structured['birth_place'] = None
+            structured['patronymic'] = None
         elif mrz_data and mrz_data.get('format') == 'TD3 (Passport 2-line)':
             result['detected_side'] = 'passport'
         elif structured.get('document_number') or structured.get('surname'):

@@ -6,7 +6,7 @@
 <title>O'zbekiston Hujjat OCR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=1.3.0">
+<link rel="stylesheet" href="style.css?v=1.3.1">
 </head>
 <body>
   <!-- ── HEADER ────────────────────────────────────────── -->
@@ -268,18 +268,49 @@
           <!-- Live Camera View -->
           <div class="kyc-camera-container" id="kycCameraView">
             <video id="kycVideo" autoplay playsinline muted></video>
+
+            <!-- Loading Spinner inside Camera -->
+            <div class="camera-loader" id="cameraLoader" style="display:none">
+              <div class="camera-spinner"></div>
+              <span>Kamera ulanmoqda...</span>
+            </div>
+
+            <!-- Floating Top Bar (Switch camera & mode indicator) -->
+            <div class="camera-top-bar" id="cameraTopBar" style="display:none">
+              <span class="cam-status-pill"><span class="live-dot"></span> <span id="camFacingLabel">Old kamera</span></span>
+              <button type="button" class="btn-cam-icon" id="btnSwitchCam" onclick="switchCameraFacing()" title="Kamerani almashtirish (Old/Orqa)">
+                🔄
+              </button>
+            </div>
             
             <!-- Biometric Oval Face Guide -->
             <div class="camera-face-guide" id="cameraGuide" style="display:none">
-              <div class="oval-guide"></div>
+              <div class="oval-guide">
+                <div class="scanner-line"></div>
+              </div>
               <div class="guide-caption">Yuzingizni doira markaziga to'g'rilang</div>
+            </div>
+
+            <!-- Bottom Floating Shutter Controls -->
+            <div class="camera-shutter-bar" id="cameraShutterBar" style="display:none">
+              <button type="button" class="btn-shutter" id="btnShutter" onclick="captureKYCSnapshot()" title="Suratga olish">
+                <span class="shutter-inner">📸</span>
+              </button>
             </div>
 
             <!-- Flash effect on snap -->
             <div class="camera-flash" id="cameraFlash"></div>
 
-            <!-- Snapshot Preview -->
-            <img id="kycSnapshotImg" src="" alt="Snapshot" class="kyc-snapshot-preview" style="display:none">
+            <!-- Snapshot Review Overlay -->
+            <div class="snapshot-overlay" id="snapshotOverlay" style="display:none">
+              <img id="kycSnapshotImg" src="" alt="Snapshot" class="kyc-snapshot-preview">
+              <div class="snapshot-badge-bar">
+                <span class="snap-badge">✓ Rasm olindi</span>
+                <button type="button" class="btn-retake-action" onclick="retakeKYCSnapshot()">
+                  🔄 Qayta tushirish
+                </button>
+              </div>
+            </div>
 
             <!-- Initial Start Prompt -->
             <div class="camera-prompt-overlay" id="cameraStartPrompt">
@@ -300,19 +331,6 @@
               <small style="color:var(--text3);font-size:11px;display:block;margin-top:2px;">yoki bu yerga tashlang</small>
             </div>
             <input type="file" id="selfieInput" accept="image/*" style="display:none" onchange="handleSelfieFile(event)">
-          </div>
-
-          <!-- Camera Controls Toolbar -->
-          <div class="kyc-camera-toolbar" id="cameraToolbar" style="display:none">
-            <button type="button" class="btn-snap" id="btnSnap" onclick="captureKYCSnapshot()" title="Suratga olish">
-              📸 Suratga olish
-            </button>
-            <button type="button" class="btn-retake" id="btnRetake" onclick="retakeKYCSnapshot()" style="display:none">
-              🔄 Qayta tushirish
-            </button>
-            <button type="button" class="btn-switch-cam" id="btnSwitchCam" onclick="switchCameraFacing()" title="Kamerani o'zgartirish">
-              🔄
-            </button>
           </div>
 
           <div class="kyc-photo-status text-muted" id="kycSelfieStatus">Kamera kutilmoqda...</div>
@@ -337,6 +355,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.3.0"></script>
+  <script src="app.js?v=1.3.1"></script>
 </body>
 </html>

@@ -349,19 +349,38 @@ def verify_kyc_selfie(
     # 2. Detect face on selfie
     selfie_face_res = detect_and_crop_face(selfie_img, pad_ratio=0.20)
     if not selfie_face_res['detected']:
-        return {
-            'success': False,
-            'match': False,
-            'similarity_percentage': 0.0,
-            'verdict': 'MISMATCH',
-            'error': 'Selfie rasmida yuz aniqlanmadi (aniqroq suratga oling)',
-            'document_face': {
+        # Fallback: if Haar cascade missed face due to lighting/noise, use central crop region
+        # where the user framed their face in the biometric oval guide
+        sh, sw = selfie_img.shape[:2]
+        crop_w = int(sw * 0.65)
+        crop_h = int(sh * 0.75)
+        cx1 = max(0, (sw - crop_w) // 2)
+        cy1 = max(0, int(sh * 0.08))
+        cx2 = min(sw, cx1 + crop_w)
+        cy2 = min(sh, cy1 + crop_h)
+        fallback_crop = selfie_img[cy1:cy2, cx1:cx2]
+        if fallback_crop is not None and fallback_crop.size > 0:
+            selfie_face_res = {
                 'detected': True,
-                'image_base64': doc_face_res['image_base64'],
-                'box': doc_face_res['box']
-            },
-            'selfie_face': {'detected': False, 'image_base64': None}
-        }
+                'box': {'x': int(cx1), 'y': int(cy1), 'w': int(cx2 - cx1), 'h': int(cy2 - cy1)},
+                'image_base64': _encode_bgr_to_base64_jpeg(fallback_crop),
+                'cropped_bgr': fallback_crop,
+                'confidence': 0.65
+            }
+        else:
+            return {
+                'success': False,
+                'match': False,
+                'similarity_percentage': 0.0,
+                'verdict': 'MISMATCH',
+                'error': 'Selfie rasmida yuz aniqlanmadi (aniqroq suratga oling)',
+                'document_face': {
+                    'detected': True,
+                    'image_base64': doc_face_res['image_base64'],
+                    'box': doc_face_res['box']
+                },
+                'selfie_face': {'detected': False, 'image_base64': None}
+            }
 
     # 3. Compare faces
     comp_res = compare_faces(

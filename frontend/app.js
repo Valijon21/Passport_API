@@ -101,6 +101,7 @@ function processFile(file) {
   state.file = file;
   hideError();
   hideResults();
+  resetKYCState();
   log(`Fayl yuklandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.OK);
 
   // Show preview
@@ -141,6 +142,7 @@ function clearAll() {
   document.getElementById('btnGeneral').disabled = true;
   hideResults();
   hideError();
+  resetKYCState();
   log('Tozalandi', LEVELS.INFO);
 }
 
@@ -784,11 +786,75 @@ let kycFacingMode = 'user'; // 'user' (front camera) or 'environment' (back came
 let kycCurrentMode = 'camera'; // 'camera' | 'upload'
 let isCameraStarting = false;
 
+function resetKYCState() {
+  stopKYCCamera();
+  state.selfieFile = null;
+
+  // Reset Live Camera Snapshot preview
+  const snapOverlay = document.getElementById('snapshotOverlay');
+  if (snapOverlay) snapOverlay.style.display = 'none';
+  const snapImg = document.getElementById('kycSnapshotImg');
+  if (snapImg) snapImg.src = '';
+
+  // Reset File Upload preview
+  const kycSelfieImg = document.getElementById('kycSelfieImg');
+  if (kycSelfieImg) {
+    kycSelfieImg.src = '';
+    kycSelfieImg.style.display = 'none';
+  }
+  const uploadPrompt = document.getElementById('selfieUploadPrompt');
+  if (uploadPrompt) uploadPrompt.style.display = 'block';
+  const selfieInput = document.getElementById('selfieInput');
+  if (selfieInput) selfieInput.value = '';
+
+  // Reset KYC Result Box & Banner
+  const resBox = document.getElementById('kycResultBox');
+  if (resBox) resBox.style.display = 'none';
+  const banner = document.getElementById('kycBanner');
+  if (banner) {
+    banner.className = 'kyc-result-banner';
+    banner.innerHTML = '';
+  }
+  const details = document.getElementById('kycDetails');
+  if (details) details.innerHTML = '';
+
+  // Reset Live Camera View controls
+  const guide = document.getElementById('cameraGuide');
+  if (guide) guide.style.display = 'none';
+  const topBar = document.getElementById('cameraTopBar');
+  if (topBar) topBar.style.display = 'none';
+  const shutterBar = document.getElementById('cameraShutterBar');
+  if (shutterBar) shutterBar.style.display = 'none';
+  const video = document.getElementById('kycVideo');
+  if (video) video.style.display = 'none';
+  const prompt = document.getElementById('cameraStartPrompt');
+  if (prompt) prompt.style.display = 'none';
+
+  // Reset Status
+  const status = document.getElementById('kycSelfieStatus');
+  if (status) {
+    status.textContent = 'Kamera kutilmoqda...';
+    status.className = 'kyc-photo-status text-muted';
+  }
+
+  // Reset Run Button
+  const btnRun = document.getElementById('btnRunKYC');
+  if (btnRun) {
+    btnRun.disabled = true;
+    btnRun.classList.remove('btn-pulse');
+    btnRun.textContent = '⚡ Solishtirish (Face Match)';
+  }
+}
+
 function openKYCModal() {
   const modal = document.getElementById('kycModal');
   if (!modal) return;
   modal.style.display = 'flex';
   log('KYC Selfie Match paneli ochildi', LEVELS.INFO);
+
+  // Always hide previous match results when opening modal for fresh comparison
+  const resBox = document.getElementById('kycResultBox');
+  if (resBox) resBox.style.display = 'none';
 
   // Auto-start camera if in camera mode and no selfie taken yet
   if (kycCurrentMode === 'camera' && !state.selfieFile && !kycStream) {
@@ -1108,8 +1174,9 @@ async function runKYCFaceMatch() {
 
     details.innerHTML = `
       <span>Tahlil vaqti: <strong>${data.processing_time_ms}ms</strong></span>
-      <span>Bo'sag'a (Threshold): <strong>${data.threshold_applied}%</strong></span>
-      <span>Ishonchlilik: <strong>${(data.confidence_score * 100).toFixed(1)}%</strong></span>
+      <span>Bo'sag'a: <strong>${data.threshold_applied}%</strong></span>
+      <span>LBP Tekstura: <strong>${((data.details?.spatial_lbp_similarity || 0) * 100).toFixed(1)}%</strong></span>
+      <span>Anatomiya: <strong>${((data.details?.structural_correlation || 0) * 100).toFixed(1)}%</strong></span>
     `;
 
     log(`KYC Natijasi: ${verdictText}, server=${data.processing_time_ms}ms`, isMatch ? LEVELS.OK : LEVELS.WARN);

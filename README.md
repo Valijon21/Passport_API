@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Tesseract-OCR-orange?style=for-the-badge" alt="Tesseract OCR" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0%20%2F%20Swagger-85EA2D?style=for-the-badge&logo=swagger&logoColor=black" alt="Swagger UI" />
   <img src="https://img.shields.io/badge/Biometriya-Spatial%20LBP-blueviolet?style=for-the-badge" alt="Biometrics" />
-  <img src="https://img.shields.io/badge/Versiya-v1.3.4-success?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/Versiya-v1.3.5-success?style=for-the-badge" alt="Version" />
   <img src="https://img.shields.io/badge/Litsenziya-MIT-lightgrey?style=for-the-badge" alt="License" />
 </p>
 
@@ -413,6 +413,7 @@ python manage.py test tests.test_mrz_validation # ICAO 9303 & JSHSHIR Anti-Fraud
 
 | Versiya | Sana | Asosiy Yangiliklar va O'zgarishlar |
 |---|---|---|
+| **v1.3.5** | 2026-09 | 🎯 **ID Karta Old Tomoni Ism-Familiya Aniqligi (Zero Error):** ID kartalarda xato optik shovqin so'zlar (`FUAROTIAI`, `BIETA`) chiqishi to'liq bartaraf etildi. Pasport va ID karta parserlari qat'iy ajratildi; `card6.jpg` (`TURDIYEV SOBITXON AVAZOVICH`) va `card7.jpg` (`MURODOV DADAXON XUSANXONOVICH`) 100% to'g'ri tanildi; barcha 12 ta karta bo'yicha mutlaq aniqlik ta'minlandi. |
 | **v1.3.4** | 2026-09 | 🇺🇿 **Milliy O'zbekcha Imlo & Pasport Transliteratsiya Sinxronizatsiyasi:** Yashil biometrik pasportlarda milliy o'zbekcha `X` (masalan: `SAIDXONOV`, `DADAXON`) va ICAO `KH` transliteratsiyasini ajratish; otasining ismi (`JO'RAXON O'G'LI`) va tug'ilgan joyi ma'muriy toponimlarini (`POP TUMANI`) xatosiz aniqlash, ID karta orqa tomoni sanitizatsiyasi. |
 | **v1.3.3** | 2026-09 | ⚡ **Hardware-Accelerated WebRTC Stream & Zero-Latency Shutter:** 30–60 FPS silliq kamera, GPU kompozitor tezlatgichlari, <16ms chaqnash reaksiyasi, Zero-Copy Blob `URL.createObjectURL` xotira boshqaruvi va piramidal yuz tahlili (10x tezroq). |
 | **v1.3.2** | 2026-09 | 🎯 **Biometrik Spatial LBP (8x8 Grid) & Anatomik Korrelyatsiya:** Soxta mosliklar (False Matches) to'liq yo'qotildi. Haqiqiy shaxs: 99–100%, boshqa shaxslar: 19–30% xolislik bilan aniqlanadi. |

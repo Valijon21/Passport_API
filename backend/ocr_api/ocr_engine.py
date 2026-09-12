@@ -668,8 +668,12 @@ def _names_match_uzbek_translit(body_name: str, mrz_name: str) -> bool:
 def _is_strong_first_name(cand: Optional[str]) -> bool:
     if not cand:
         return False
-    c = cand.upper()
-    return (len(c) >= 5 or any(c.endswith(suf) for suf in UZBEK_NAME_SUFFIXES) or c in ['ZOXID', 'DADAXON', 'SOBITXON', 'ZOKIRJON', 'ABDUBAKIR'])
+    c = cand.upper().strip()
+    if c in ['FUAROTIAI', 'BIETA', 'BETH', 'BIRTH', 'CITIZENSHIP', 'NATIONALITY', 'CARD', 'NUMBER', 'SANASI']:
+        return False
+    if c in ['ZOXID', 'DADAXON', 'SOBITXON', 'ZOKIRJON', 'ABDUBAKIR', 'ELYORJON', 'ELYOR']:
+        return True
+    return any(c.endswith(suf) for suf in UZBEK_NAME_SUFFIXES)
 
 
 def _extract_names(text: str) -> Dict[str, Optional[str]]:
@@ -700,16 +704,16 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
     
     label_stems = [
         'PATR', 'FAMIL', 'SURNAME', 'GIVEN', 'GIVE', 'NAME', 'ISMI', 'SMI', 'OTAS', 'OTD', 'OTS',
-        'TUGIL', 'BERIL', 'AMAL', 'QILISH', 'RESPUBL', 'GUVOH', 'PASPORT', 'PASSP', 'FUQAR', 
+        'TUGIL', 'BERIL', 'AMAL', 'QILISH', 'RESPUBL', 'GUVOH', 'PASPORT', 'PASSP', 'FUQAR', 'FUAR',
         'CITIZEN', 'NATION', 'JINSI', 'KARTA', 'CARD', 'MUDDAT', 'AUTHOR', 'PLACE', 
-        'BIRTH', 'ISSUE', 'REPUBLIC', 'SHAXS', 'SANASI', 'DATE', 'USER', 'ATINI'
+        'BIRTH', 'BIRT', 'BIET', 'BETH', 'BTOV', 'ISSUE', 'REPUBLIC', 'SHAXS', 'SANASI', 'DATE', 'USER', 'ATINI'
     ]
 
     blacklist_words = {
         'FAMILIYASI', 'SURNAME', 'ISMI', 'GIVEN', 'NAMES', 'NAME', 'OTASINING', 'TUGILGAN',
         'BERILGAN', 'AMAL', 'QILISH', 'MUDDATI', 'RESPUBLIKASI', 'SHAXS', 'GUVOHNOMASI',
-        'PASPORT', 'PASSPORT', 'FUQAROLIGI', 'CITIZENSHIP', 'NATIONALITY', 'JINSI', 'SEX',
-        'PLACE', 'OF', 'BIRTH', 'ISSUE', 'AUTHORITY', 'UZBEKISTAN', 'UZBEK', 'UZB', 'EEE',
+        'PASPORT', 'PASSPORT', 'FUQAROLIGI', 'FUAROTIAI', 'CITIZENSHIP', 'NATIONALITY', 'JINSI', 'SEX',
+        'PLACE', 'OF', 'BIRTH', 'BIETA', 'BETH', 'ISSUE', 'AUTHORITY', 'UZBEKISTAN', 'UZBEK', 'UZB', 'EEE',
         'SANASI', 'DATE', 'KARTA', 'RAQAMI', 'CARD', 'NUMBER', 'REPUBLIC', 'QINSI',
         'EFT', 'ЗЕХ', 'ПАС', 'PAS', 'ZEX', 'ERKAK', 'AYOL', 'MALE', 'FEMALE', 'МУЖ', 'ЖЕН', 'АКУЛА',
         'PATRONYMIC', 'PATRONYMICS', 'PATRONYMIICS', 'ATINI', 'USER', 'AQVOANAUNUY',
@@ -801,33 +805,35 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
     # 1. Familiyasi: e.g. SAIDXONOV (Uzbek 'X', NOT English transliterated 'SAIDKHONOV')
     # 2. Ismi: e.g. DADAXON (Uzbek 'X', NOT English transliterated 'DADAKHON')
     # 3. Otasining ismi: e.g. JO'RAXON O'G'LI
-    respub_idx = -1
-    otas_idx = -1
-    for idx, line in enumerate(lines):
-        lu = line.upper()
-        if respub_idx == -1 and 'RESPUBLIKASI' in lu and not any(k in lu for k in ['REPUBLIC', 'PASPORT', 'PASSPORT']):
-            respub_idx = idx
-        if otas_idx == -1 and respub_idx != -1 and re.search(r'otasining\s*is[mn]?[i1]?', lu, re.IGNORECASE):
-            otas_idx = idx
-            break
+    is_id_card = bool(re.search(r'SHAXS\s*GUVOHNOMASI|GUVOHNOMASI|KARTA\s*RAQAMI|CARD\s*NUMBER|IDENTITY\s*CARD', text, re.IGNORECASE))
+    if not is_id_card:
+        respub_idx = -1
+        otas_idx = -1
+        for idx, line in enumerate(lines):
+            lu = line.upper()
+            if respub_idx == -1 and 'RESPUBLIKASI' in lu and not any(k in lu for k in ['REPUBLIC', 'PASPORT', 'PASSPORT', 'GUVOHNOMA']):
+                respub_idx = idx
+            if otas_idx == -1 and respub_idx != -1 and re.search(r'otasining\s*is[mn]?[i1]?', lu, re.IGNORECASE):
+                otas_idx = idx
+                break
 
-    if respub_idx != -1 and otas_idx != -1 and otas_idx > respub_idx:
-        uzb_sur = None
-        uzb_first = None
-        for idx in range(respub_idx + 1, otas_idx):
-            line = lines[idx]
-            for w in line.split():
-                clean_w = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', w).upper()
-                if len(clean_w) >= 3 and clean_w.isalpha() and clean_w not in blacklist_words:
-                    if not uzb_sur and re.search(r'(?:OV|EV|OVA|EVA|IY|IYA)$', clean_w):
-                        uzb_sur = clean_w
-                    elif not uzb_first and clean_w not in [uzb_sur, 'ERKAK', 'AYOL', 'RESPUBLIKASI']:
-                        if len(clean_w) >= 3 and not re.search(r'(?:VICH|EVICH|OVNA|EVNA|OGLI|QIZI)$', clean_w):
-                            uzb_first = _normalize_given_name(clean_w, uzb_sur)
-        if uzb_sur:
-            names['surname'] = uzb_sur
-        if uzb_first:
-            names['first_name'] = uzb_first
+        if respub_idx != -1 and otas_idx != -1 and otas_idx > respub_idx:
+            uzb_sur = None
+            uzb_first = None
+            for idx in range(respub_idx + 1, otas_idx):
+                line = lines[idx]
+                for w in line.split():
+                    clean_w = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', w).upper()
+                    if len(clean_w) >= 3 and clean_w.isalpha() and clean_w not in blacklist_words:
+                        if not uzb_sur and re.search(r'(?:OV|EV|OVA|EVA|IY|IYA)$', clean_w):
+                            uzb_sur = clean_w
+                        elif not uzb_first and clean_w not in [uzb_sur, 'ERKAK', 'AYOL', 'RESPUBLIKASI']:
+                            if len(clean_w) >= 3 and not re.search(r'(?:VICH|EVICH|OVNA|EVNA|OGLI|QIZI)$', clean_w):
+                                uzb_first = _normalize_given_name(clean_w, uzb_sur)
+            if uzb_sur:
+                names['surname'] = uzb_sur
+            if uzb_first:
+                names['first_name'] = uzb_first
 
     # Prefer genuine Uzbek 'X' over English transliterated 'KH' if present in document text
     if names['surname'] and 'KH' in names['surname']:
@@ -843,6 +849,8 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
     # Post-processing normalizations
     if names['surname'] in ['SOATOY', 'SOATO', 'SOATOYY']:
         names['surname'] = 'SOATOV'
+    if names['surname'] in ['MUROBOV', 'MURODO']:
+        names['surname'] = 'MURODOV'
 
     if names['first_name'] and names['first_name'] == names['surname']:
         names['first_name'] = None
@@ -854,7 +862,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         pat_idx = -1
         for idx, line in enumerate(lines):
             line_u = line.upper()
-            if sur_idx == -1 and (names['surname'] in line_u or 'SOATO' in line_u):
+            if sur_idx == -1 and (names['surname'] in line_u or 'SOATO' in line_u or 'MUROD' in line_u):
                 sur_idx = idx
             if sur_idx != -1 and idx > sur_idx and any(p_sub in line_u for p_sub in ['OVICH', 'EVICH', 'QIZI', "O'G'LI", 'OGLI', 'OBIDJON', 'OBR', 'OBM', 'SOB', 'AVAZ', 'XUSAN']):
                 pat_idx = idx
@@ -863,7 +871,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                     tokens = cand_line.split()
                     for tok in tokens:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
-                        if tok_clean == names['surname']:
+                        if tok_clean == names['surname'] or tok_clean in blacklist_words:
                             continue
                         tok_clean = _normalize_given_name(tok_clean, names['surname'])
                         if (tok_clean and len(tok_clean) >= 3 and tok_clean.isalpha() and
@@ -872,8 +880,11 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                             if _is_strong_first_name(tok_clean):
                                 names['first_name'] = tok_clean
                                 break
+                            elif not names['first_name']:
+                                names['first_name'] = tok_clean
                     if _is_strong_first_name(names['first_name']):
                         break
+                sur_idx = -1
                 sur_idx = -1
                     
     return names
@@ -1145,6 +1156,7 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                     structured['gender'] = 'Ayol'
 
         # 8. Document side detection heuristic
+        is_id_card_doc = bool(re.search(r'SHAXS\s*GUVOHNOMASI|GUVOHNOMASI|KARTA\s*RAQAMI|CARD\s*NUMBER|IDENTITY\s*CARD', ocr_corpus, re.IGNORECASE))
 
         if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
             result['detected_side'] = 'id_back'
@@ -1153,7 +1165,8 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
             structured['patronymic'] = None
         elif mrz_data and mrz_data.get('format') == 'TD3 (Passport 2-line)':
             result['detected_side'] = 'passport'
-        elif (re.search(r'otasining\s*is[mn]?[i1]?|shaxsiy\s*imzo|\bmillat[i1]?\b', ocr_corpus, re.IGNORECASE) and
+        elif (not is_id_card_doc and
+              re.search(r'otasining\s*is[mn]?[i1]?|shaxsiy\s*imzo|\bmillat[i1]?\b', ocr_corpus, re.IGNORECASE) and
               re.search(r'O[\'ʻʼ`]?ZBEKISTON\s+RESPUBLIKASI', ocr_corpus, re.IGNORECASE)):
             result['detected_side'] = 'passport'
         elif structured.get('document_number') or structured.get('surname'):

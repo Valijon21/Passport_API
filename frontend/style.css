@@ -1080,7 +1080,8 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scaleX(-1); /* Natural selfie mirror */
+  transform: scaleX(-1) translateZ(0); /* Natural selfie mirror + dedicated GPU layer */
+  will-change: transform;
   background: #000;
 }
 
@@ -1166,7 +1167,7 @@ body {
   transform: rotate(180deg);
 }
 
-/* Biometric Oval Guide */
+/* Biometric Oval Guide (Static Cutout Shadow + GPU Composited Pulse) */
 .camera-face-guide {
   position: absolute;
   inset: 0;
@@ -1182,10 +1183,12 @@ body {
   height: 160px;
   border: 2px dashed rgba(0, 212, 170, 0.85);
   border-radius: 50%;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.40);
-  animation: pulseOval 3s infinite ease-in-out;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.40); /* Static shadow - never animated to avoid GPU re-raster stalls */
   position: relative;
   overflow: hidden;
+  transform: translateZ(0);
+  will-change: border-color, opacity;
+  animation: pulseOval 2.5s infinite ease-in-out;
 }
 .scanner-line {
   position: absolute;
@@ -1195,18 +1198,25 @@ body {
   height: 2px;
   background: linear-gradient(90deg, transparent, #00d4aa, transparent);
   box-shadow: 0 0 8px #00d4aa;
+  transform: translateZ(0);
+  will-change: transform, opacity;
   animation: scanLaser 2.2s infinite ease-in-out;
 }
 @keyframes scanLaser {
-  0% { top: 5%; opacity: 0; }
+  0% { transform: translateY(6px); opacity: 0; }
   15% { opacity: 1; }
   85% { opacity: 1; }
-  100% { top: 95%; opacity: 0; }
+  100% { transform: translateY(152px); opacity: 0; }
 }
 @keyframes pulseOval {
-  0% { border-color: rgba(0, 212, 170, 0.6); }
-  50% { border-color: rgba(0, 212, 170, 1); box-shadow: 0 0 16px rgba(0, 212, 170, 0.35), 0 0 0 9999px rgba(0, 0, 0, 0.40); }
-  100% { border-color: rgba(0, 212, 170, 0.6); }
+  0%, 100% {
+    border-color: rgba(0, 212, 170, 0.5);
+    opacity: 0.85;
+  }
+  50% {
+    border-color: rgba(0, 212, 170, 1);
+    opacity: 1;
+  }
 }
 .guide-caption {
   margin-top: 6px;
@@ -1243,8 +1253,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  will-change: transform;
 }
 .btn-shutter:hover {
   transform: scale(1.08);
@@ -1252,7 +1266,13 @@ body {
   background: rgba(0, 212, 170, 0.3);
 }
 .btn-shutter:active {
-  transform: scale(0.92);
+  transform: scale(0.90);
+}
+.btn-shutter:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+  transform: scale(0.95);
 }
 .shutter-inner {
   width: 100%;
@@ -1278,10 +1298,11 @@ body {
   opacity: 0;
   pointer-events: none;
   z-index: 12;
-  transition: opacity 0.15s ease-out;
+  transition: opacity 0.1s ease-out;
+  will-change: opacity;
 }
 .camera-flash.flash-active {
-  opacity: 0.9;
+  opacity: 0.85;
 }
 
 /* Snapshot Overlay */

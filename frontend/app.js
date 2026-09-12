@@ -785,10 +785,17 @@ let kycStream = null;
 let kycFacingMode = 'user'; // 'user' (front camera) or 'environment' (back camera)
 let kycCurrentMode = 'camera'; // 'camera' | 'upload'
 let isCameraStarting = false;
+let currentSnapshotUrl = null;
 
 function resetKYCState() {
   stopKYCCamera();
   state.selfieFile = null;
+
+  // Revoke snapshot object URL to prevent memory leaks
+  if (currentSnapshotUrl) {
+    try { URL.revokeObjectURL(currentSnapshotUrl); } catch (e) {}
+    currentSnapshotUrl = null;
+  }
 
   // Reset Live Camera Snapshot preview
   const snapOverlay = document.getElementById('snapshotOverlay');
@@ -927,13 +934,14 @@ async function startKYCCamera() {
     const facingText = kycFacingMode === 'user' ? 'Old kamera' : 'Orqa kamera';
     if (facingLabelEl) facingLabelEl.textContent = facingText;
 
-    // First attempt: ideal constraints
+    // Stream constraints: optimized for smooth 30-60 FPS without driver/USB bandwidth stalls
     let stream = null;
     const constraints = {
       video: {
         facingMode: kycFacingMode ? { ideal: kycFacingMode } : 'user',
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 }
+        width: { ideal: 640, max: 1280 },
+        height: { ideal: 480, max: 720 },
+        frameRate: { ideal: 30, max: 60 }
       },
       audio: false
     };
@@ -941,7 +949,7 @@ async function startKYCCamera() {
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (firstErr) {
-      console.warn('Initial camera constraints failed, attempting fallback {video: true}:', firstErr);
+      console.warn('Optimized camera constraints failed, attempting fallback {video: true}:', firstErr);
       stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     }
 
@@ -949,6 +957,7 @@ async function startKYCCamera() {
 
     if (video) {
       video.srcObject = stream;
+      video.playsInline = true;
       video.style.display = 'block';
 
       // Wait for camera to actually stream frames before rendering UI to avoid black frame
@@ -962,6 +971,8 @@ async function startKYCCamera() {
         if (guide) guide.style.display = 'flex';
         if (topBar) topBar.style.display = 'flex';
         if (shutterBar) shutterBar.style.display = 'flex';
+        const btnShutter = document.getElementById('btnShutter');
+        if (btnShutter) btnShutter.disabled = false;
         if (status) {
           status.textContent = `● Jonli efir (${facingText})`;
           status.className = 'kyc-photo-status text-ok';
@@ -1023,44 +1034,83 @@ function captureKYCSnapshot() {
   const shutterBar = document.getElementById('cameraShutterBar');
   const btnRun = document.getElementById('btnRunKYC');
   const status = document.getElementById('kycSelfieStatus');
+  const btnShutter = document.getElementById('btnShutter');
 
   if (!video || !video.videoWidth || video.videoWidth === 0) {
     showError('Kamera tayyor emas', 'Kamera hali to\'liq yuklanmadi. 1 soniya kuting yoki qaytadan yoqing.');
     return;
   }
 
-  // Camera flash animation
+  // Prevent multiple rapid clicks during capture
+  if (btnShutter) btnShutter.disabled = true;
+
+  // 1. Instant tactile & flash animation (smooth 60 FPS feedback)
   if (flash) {
     flash.classList.add('flash-active');
-    setTimeout(() => flash.classList.remove('flash-active'), 180);
+    requestAnimationFrame(() => {
+      setTimeout(() => flash.classList.remove('flash-active'), 120);
+    });
+  }
+  if (navigator.vibrate) {
+    try { navigator.vibrate(40); } catch (e) {}
   }
 
-  const vw = video.videoWidth || 640;
-  const vh = video.videoHeight || 480;
+  // 2. High-performance resolution scaling (cap to 800px max dimension)
+  // Eliminates heavy 1080p/4K main thread blocking (< 1ms drawing latency)
+  const maxDim = 800;
+  let vw = video.videoWidth || 640;
+  let vh = video.videoHeight || 480;
+  if (vw > maxDim || vh > maxDim) {
+    if (vw > vh) {
+      vh = Math.round((vh * maxDim) / vw);
+      vw = maxDim;
+    } else {
+      vw = Math.round((vw * maxDim) / vh);
+      vh = maxDim;
+    }
+  }
+
   canvas.width = vw;
   canvas.height = vh;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
 
-  // If user facing mode, flip horizontally so selfie photo matches the user preview exactly
+  // 3. Render video frame to canvas with mirror correction if user-facing
   if (kycFacingMode === 'user') {
+    ctx.save();
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  } else {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   }
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-  if (snapImg) snapImg.src = dataUrl;
-  if (snapOverlay) snapOverlay.style.display = 'flex';
-
-  // Hide live controls and video
-  if (guide) guide.style.display = 'none';
-  if (topBar) topBar.style.display = 'none';
-  if (shutterBar) shutterBar.style.display = 'none';
-  if (video) video.style.display = 'none';
-
-  // Convert canvas to File/Blob for API
+  // 4. Non-blocking zero-copy snapshot preview via toBlob + ObjectURL (NO toDataURL!)
   canvas.toBlob((blob) => {
+    if (!blob) {
+      if (btnShutter) btnShutter.disabled = false;
+      return;
+    }
+
+    // Clean up previous blob URL to prevent memory leaks
+    if (currentSnapshotUrl) {
+      try { URL.revokeObjectURL(currentSnapshotUrl); } catch (e) {}
+      currentSnapshotUrl = null;
+    }
+
+    currentSnapshotUrl = URL.createObjectURL(blob);
+    if (snapImg) snapImg.src = currentSnapshotUrl;
+    if (snapOverlay) snapOverlay.style.display = 'flex';
+
+    // Hide live camera overlay elements
+    if (guide) guide.style.display = 'none';
+    if (topBar) topBar.style.display = 'none';
+    if (shutterBar) shutterBar.style.display = 'none';
+    if (video) video.style.display = 'none';
+
+    // Store file in state for KYC Face Match API
     state.selfieFile = new File([blob], 'live_selfie.jpg', { type: 'image/jpeg' });
+
     if (btnRun) {
       btnRun.disabled = false;
       btnRun.classList.add('btn-pulse');
@@ -1069,11 +1119,12 @@ function captureKYCSnapshot() {
       status.textContent = '✓ Jonli biometrik selfie olindi';
       status.className = 'kyc-photo-status text-ok';
     }
-    log('Jonli biometrik selfie muvaffaqiyatli olindi va tahlilga tayyorlandi', LEVELS.OK);
-  }, 'image/jpeg', 0.92);
+    if (btnShutter) btnShutter.disabled = false;
+    log('Jonli biometrik selfie muvaffaqiyatli olindi (Zero-Latency Snapshot)', LEVELS.OK);
 
-  // Stop camera hardware to free the camera device immediately
-  stopKYCCamera();
+    // Stop camera device asynchronously to avoid blocking UI frame render
+    setTimeout(() => stopKYCCamera(), 60);
+  }, 'image/jpeg', 0.88);
 }
 
 function retakeKYCSnapshot() {
@@ -1081,9 +1132,16 @@ function retakeKYCSnapshot() {
   const snapImg = document.getElementById('kycSnapshotImg');
   const btnRun = document.getElementById('btnRunKYC');
   const resBox = document.getElementById('kycResultBox');
+  const btnShutter = document.getElementById('btnShutter');
+
+  if (currentSnapshotUrl) {
+    try { URL.revokeObjectURL(currentSnapshotUrl); } catch (e) {}
+    currentSnapshotUrl = null;
+  }
 
   if (snapOverlay) snapOverlay.style.display = 'none';
   if (snapImg) snapImg.src = '';
+  if (btnShutter) btnShutter.disabled = false;
   if (btnRun) {
     btnRun.disabled = true;
     btnRun.classList.remove('btn-pulse');

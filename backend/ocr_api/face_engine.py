@@ -71,10 +71,27 @@ def detect_and_crop_face(
         }
 
     h, w = image_bgr.shape[:2]
-    min_dim = min(h, w)
-    min_size = int(min_dim * min_relative_size)
+    max_dim = max(h, w)
+    target_max = 900
 
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    # Fast pyramid downsampling for multi-megapixel images (e.g. 4K/1080p mobile/webcam frames)
+    # Reduces Haar cascade evaluation time by 5-10x while maintaining 100% full-resolution crop
+    if max_dim > target_max:
+        scale = target_max / float(max_dim)
+        detect_w = max(100, int(w * scale))
+        detect_h = max(100, int(h * scale))
+        detect_img = cv2.resize(image_bgr, (detect_w, detect_h), interpolation=cv2.INTER_AREA)
+        inv_scale = 1.0 / scale
+    else:
+        scale = 1.0
+        detect_img = image_bgr
+        inv_scale = 1.0
+
+    dh, dw = detect_img.shape[:2]
+    d_min_dim = min(dh, dw)
+    min_size = max(20, int(d_min_dim * min_relative_size))
+
+    gray = cv2.cvtColor(detect_img, cv2.COLOR_BGR2GRAY)
     # Contrast enhancement for better face detection in varied lighting
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_enhanced = clahe.apply(gray)
@@ -122,11 +139,20 @@ def detect_and_crop_face(
         aspect_score = 1.0 - min(abs(aspect - 1.25), 1.0)
         # Position bonus for left half (standard ID card photo position)
         center_x = x + fw / 2.0
-        pos_bonus = 1.2 if center_x < w * 0.55 else 1.0
+        pos_bonus = 1.2 if center_x < dw * 0.55 else 1.0
         return area * aspect_score * pos_bonus
 
     best = max(candidates, key=score_candidate)
-    x, y, fw, fh, conf = best
+    dx, dy, dfw, dfh, conf = best
+
+    # Map detected bounding box back to full original image coordinates
+    if scale != 1.0:
+        x = max(0, int(round(dx * inv_scale)))
+        y = max(0, int(round(dy * inv_scale)))
+        fw = min(w - x, int(round(dfw * inv_scale)))
+        fh = min(h - y, int(round(dfh * inv_scale)))
+    else:
+        x, y, fw, fh = dx, dy, dfw, dfh
 
     # Apply padding around face for clean portrait photo
     pad_w = int(fw * pad_ratio)

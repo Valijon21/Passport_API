@@ -12,10 +12,11 @@
 const CONFIG = {
   API_BASE: 'http://127.0.0.1:8000/api/v1',  // ← Django server
   ENDPOINTS: {
-    ID_CARD:  '/ocr/id/',
-    GENERAL:  '/ocr/general/',
-    HEALTH:   '/health/',
-    INFO:     '/info/',
+    ID_CARD:    '/ocr/id/',
+    GENERAL:    '/ocr/general/',
+    FACE_MATCH: '/kyc/face-match/',
+    HEALTH:     '/health/',
+    INFO:       '/info/',
   },
 };
 
@@ -24,6 +25,7 @@ const CONFIG = {
 // ══════════════════════════════════════════════════════════════
 const state = {
   file: null,
+  selfieFile: null,
   lastResult: null,
   lastResultType: null,  // 'id' | 'general'
 };
@@ -257,6 +259,7 @@ function handleAPIError(err, context) {
 // ══════════════════════════════════════════════════════════════
 function renderIDResult(data) {
   renderConfidence(data.confidence, data.processing_time_ms);
+  renderFaceCrop(data.face);
   renderStructuredFields(data.structured_fields || {});
   renderRawText(data.raw_text || '');
   renderMRZ(data.mrz);
@@ -272,6 +275,7 @@ function renderIDResult(data) {
 function renderGeneralResult(data) {
   // For general OCR, show in raw text tab, hide structured
   renderConfidence(data.confidence, data.processing_time_ms);
+  renderFaceCrop(null);
 
   // Empty structured fields notice
   document.getElementById('fieldsGrid').innerHTML = `
@@ -304,6 +308,23 @@ function renderConfidence(conf, processingMs) {
     <span>Sifat: <strong>${quality}</strong></span>
     <span>Qayta ishlash: <strong>${processingMs}ms</strong></span>
   `;
+}
+
+function renderFaceCrop(face) {
+  const card = document.getElementById('faceCropCard');
+  const img = document.getElementById('faceCropImg');
+  const kycDoc = document.getElementById('kycDocImg');
+  if (!card) return;
+
+  if (face && face.detected && face.image_base64) {
+    if (img) img.src = face.image_base64;
+    if (kycDoc) kycDoc.src = face.image_base64;
+    card.style.display = 'flex';
+    log('Hujjatdan shaxs surati qirqib olindi (Face Crop)', LEVELS.OK);
+  } else {
+    card.style.display = 'none';
+    if (kycDoc) kycDoc.src = '';
+  }
 }
 
 const FIELD_LABELS = {
@@ -661,6 +682,8 @@ function showResults() {
 
 function hideResults() {
   document.getElementById('resultsSection').style.display = 'none';
+  const card = document.getElementById('faceCropCard');
+  if (card) card.style.display = 'none';
 }
 
 function showError(title, detail) {
@@ -753,6 +776,108 @@ async function checkHealth() {
 
 function closeModal() {
   document.getElementById('healthModal').style.display = 'none';
+}
+
+// ── KYC Selfie Match ─────────────────────────────────────────
+function openKYCModal() {
+  const modal = document.getElementById('kycModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  log('KYC Selfie Match paneli ochildi', LEVELS.INFO);
+}
+
+function closeKYCModal() {
+  const modal = document.getElementById('kycModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function handleSelfieFile(e) {
+  const files = e.target.files;
+  if (!files || !files.length) return;
+
+  const file = files[0];
+  state.selfieFile = file;
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = document.getElementById('kycSelfieImg');
+    const prompt = document.getElementById('selfieUploadPrompt');
+    const status = document.getElementById('kycSelfieStatus');
+    const btn = document.getElementById('btnRunKYC');
+
+    if (img) {
+      img.src = ev.target.result;
+      img.style.display = 'block';
+    }
+    if (prompt) prompt.style.display = 'none';
+    if (status) {
+      status.textContent = `✓ Yuklandi: ${file.name.substring(0, 16)}...`;
+      status.className = 'kyc-photo-status text-ok';
+    }
+    if (btn) btn.disabled = false;
+    log(`Selfie tanlandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.INFO);
+  };
+  reader.readAsDataURL(file);
+}
+
+async function runKYCFaceMatch() {
+  if (!state.file || !state.selfieFile) {
+    showError('Fayllar yetarli emas', 'Iltimos, avval hujjat va jonli selfie rasmini tanlang.');
+    return;
+  }
+
+  const btn = document.getElementById('btnRunKYC');
+  btn.disabled = true;
+  btn.textContent = 'Biometrik solishtirilmoqda...';
+
+  const resBox = document.getElementById('kycResultBox');
+  const banner = document.getElementById('kycBanner');
+  const details = document.getElementById('kycDetails');
+
+  try {
+    const fd = new FormData();
+    fd.append('document_image', state.file);
+    fd.append('selfie_image', state.selfieFile);
+    fd.append('threshold', 72.0);
+
+    log('KYC 1:1 Face Match tahlili boshlandi...', LEVELS.INFO);
+    const data = await apiRequest(CONFIG.ENDPOINTS.FACE_MATCH, fd);
+
+    resBox.style.display = 'block';
+
+    const isMatch = data.match;
+    const pct = data.similarity_percentage;
+    const verdict = data.verdict;
+
+    let bannerClass = isMatch ? 'match' : (verdict === 'UNCERTAIN' ? 'uncertain' : 'mismatch');
+    let verdictText = isMatch 
+      ? `✅ SHAXS TASDIQLANDI: ${pct}% Moslik` 
+      : (verdict === 'UNCERTAIN' ? `⚠️ QISMAN MOS: ${pct}%` : `❌ SHAXS MOS EMAS: ${pct}%`);
+
+    banner.className = `kyc-result-banner ${bannerClass}`;
+    banner.innerHTML = `
+      <span>${verdictText}</span>
+      <span style="font-size:12px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.2);">${verdict}</span>
+    `;
+
+    details.innerHTML = `
+      <span>Tahlil vaqti: <strong>${data.processing_time_ms}ms</strong></span>
+      <span>Bo'sag'a (Threshold): <strong>${data.threshold_applied}%</strong></span>
+      <span>Ishonchlilik: <strong>${(data.confidence_score * 100).toFixed(1)}%</strong></span>
+    `;
+
+    log(`KYC Natijasi: ${verdictText}, server=${data.processing_time_ms}ms`, isMatch ? LEVELS.OK : LEVELS.WARN);
+
+  } catch (err) {
+    resBox.style.display = 'block';
+    banner.className = 'kyc-result-banner mismatch';
+    banner.innerHTML = `<span>🚨 Xatolik: ${escapeHtml(err.message || 'Tahlil qilib bo\'lmadi')}</span>`;
+    details.innerHTML = '<span>Iltimos, har ikkala rasmda yuz aniq ko\'rinayotganini tekshiring.</span>';
+    log(`KYC Xatosi: ${err.message}`, LEVELS.ERROR);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Solishtirish (Face Match)';
+  }
 }
 
 // ── Clipboard ────────────────────────────────────────────────

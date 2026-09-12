@@ -5,6 +5,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve
 from pathlib import Path
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 FRONTEND_DIR = settings.BASE_DIR.parent / 'frontend'
 
@@ -17,6 +18,12 @@ urlpatterns = [
     # ── API & Admin ───────────────────────────────────────────────────────────
     path('admin/', admin.site.urls),
     path('api/v1/', include('ocr_api.urls')),
+
+    # ── OpenAPI 3.0 & Swagger UI ──────────────────────────────────────────────
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    path('docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='docs-shortcut'),
 ]
 
 if settings.DEBUG:

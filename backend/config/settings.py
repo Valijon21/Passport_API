@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'drf_spectacular',
     'ocr_api.apps.OcrApiConfig',
 ]
 
@@ -95,6 +96,7 @@ CORS_ALLOWED_ORIGINS = [
 
 # ─── REST FRAMEWORK ─────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
@@ -110,6 +112,27 @@ REST_FRAMEWORK = {
         'anon': '500/hour',
     }
 }
+
+# ─── SPECTACULAR (SWAGGER / OPENAPI) ───────────────────────────────────────
+SPECTACULAR_SETTINGS = {
+    'TITLE': "O'zbekiston Hujjat OCR va KYC API",
+    'DESCRIPTION': (
+        "O'zbekiston ID karta, Biometrik Pasport, ICAO 9303 MRZ 7-3-1 tahlili, "
+        "JSHSHIR Anti-Fraud, Face Extraction (shaxs suratini qirqish) va "
+        "1:1 Selfie Match KYC tekshiruvi bo'yicha yuqori aniqlikdagi REST API."
+    ),
+    'VERSION': '1.2.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'CONTACT': {
+        'name': 'Valijon Ergashev',
+        'url': 'https://github.com/Valijon21/Passport_API',
+    },
+    'LICENSE': {
+        'name': 'MIT License',
+    },
+    'COMPONENT_SPLIT_REQUEST': True,
+}
+
 
 # ─── OCR CONFIG ─────────────────────────────────────────────────────────────
 # Default Tesseract paths depending on OS

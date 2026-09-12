@@ -28,6 +28,7 @@ import cv2
 import pytesseract
 from PIL import Image
 from typing import Optional, Dict, Any, Tuple, List
+from .mrz_validator import build_verification_report, auto_correct_mrz_field
 
 logger = logging.getLogger('ocr_api')
 
@@ -360,6 +361,9 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
                         cand = l1[5:14].replace('<', '').strip()
                         if len(cand) == 9:
                             doc_num = cand
+                    if doc_num and len(l1) > 14 and l1[14].isdigit():
+                        corr_doc, _ = auto_correct_mrz_field(doc_num, l1[14])
+                        doc_num = corr_doc
                             
                     # Line 2: Birth date (0:6), check digit (6), Sex (7), Expiry date (8:14), check digit (14), Nationality (15:18)
                     l2_digs = l2.replace('O', '0').replace('o', '0').replace('B', '8').replace('S', '5').replace('s', '5').replace('Z', '2').replace('I', '1').replace('l', '1')
@@ -375,7 +379,10 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
                             
                     # Robust Birth & Expiry dates using sex anchor or positional slices
                     m_b = re.search(r'(\d{6})\d*[MF]', l2_digs)
-                    birth_date = _parse_mrz_birth_date(m_b.group(1)) if m_b else _parse_mrz_birth_date(l2_digs[0:6])
+                    b_cand = m_b.group(1) if m_b else l2_digs[0:6]
+                    if len(l2_digs) > 6 and l2_digs[6].isdigit():
+                        b_cand, _ = auto_correct_mrz_field(b_cand, l2_digs[6])
+                    birth_date = _parse_mrz_birth_date(b_cand)
                     
                     m_e = re.search(r'[MF]\D*(\d{6})', l2_digs)
                     expiry_date = _parse_mrz_expiry_date(m_e.group(1)) if m_e else _parse_mrz_expiry_date(l2_digs[8:14])
@@ -425,9 +432,15 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
                     
                     doc_match = re.search(r'([A-Z]{2}\d{7})', l2)
                     doc_num = doc_match.group(1) if doc_match else (l2[0:9].replace('<', '').strip() if len(l2) >= 9 else None)
+                    if doc_num and len(l2) > 9 and l2[9].isdigit():
+                        corr_doc, _ = auto_correct_mrz_field(doc_num, l2[9])
+                        doc_num = corr_doc
                     
                     nationality = l2[10:13].replace('<', '') if len(l2) >= 13 else 'UZB'
-                    birth_date = _parse_mrz_birth_date(l2[13:19]) if len(l2) >= 19 else None
+                    b_cand = l2[13:19] if len(l2) >= 19 else None
+                    if b_cand and len(l2) > 19 and l2[19].isdigit():
+                        b_cand, _ = auto_correct_mrz_field(b_cand, l2[19])
+                    birth_date = _parse_mrz_birth_date(b_cand) if b_cand else None
                     gender_ch = l2[20] if len(l2) > 20 else ''
                     gender = 'Erkak' if gender_ch == 'M' else ('Ayol' if gender_ch == 'F' else None)
                     expiry_date = _parse_mrz_expiry_date(l2[21:27]) if len(l2) >= 27 else None
@@ -911,6 +924,7 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         'raw_text': '',
         'structured_fields': {},
         'mrz': None,
+        'validation': None,
         'confidence': 0.0,
         'processing_time_ms': 0.0,
         'debug': {},
@@ -1029,6 +1043,22 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
             result['detected_side'] = 'id_front'
         else:
             result['detected_side'] = 'document'
+            
+        # 9. ICAO 9303 & PINFL Verification Report (KYC & Anti-Fraud)
+        try:
+            raw_mrz_lines = [l for l in (raw_mrz_text or '').split('\n') if l.strip()]
+            result['validation'] = build_verification_report(
+                structured_fields=structured,
+                mrz_data=mrz_data,
+                raw_mrz_lines=raw_mrz_lines
+            )
+        except Exception as val_err:
+            logger.warning(f"[OCR] Validation report generation error: {val_err}")
+            result['validation'] = {
+                'is_authentic': True,
+                'overall_status': 'NOT_APPLICABLE',
+                'error': str(val_err)
+            }
             
         result['structured_fields'] = structured
         result['success'] = True

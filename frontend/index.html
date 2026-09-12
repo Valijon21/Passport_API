@@ -138,6 +138,9 @@
         <button class="tab" data-tab="mrz" onclick="switchTab(this,'mrz')">
           🔢 MRZ
         </button>
+        <button class="tab" data-tab="validation" onclick="switchTab(this,'validation')">
+          🛡️ Validatsiya & Anti-Fraud
+        </button>
         <button class="tab" data-tab="debug" onclick="switchTab(this,'debug')">
           🐛 Debug
         </button>
@@ -160,6 +163,11 @@
       <!-- MRZ -->
       <div class="tab-content" id="tab-mrz">
         <div id="mrzContent"></div>
+      </div>
+
+      <!-- Validation & Anti-Fraud -->
+      <div class="tab-content" id="tab-validation">
+        <div id="validationContent"></div>
       </div>
 
       <!-- Debug -->

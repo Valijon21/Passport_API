@@ -260,6 +260,7 @@ function renderIDResult(data) {
   renderStructuredFields(data.structured_fields || {});
   renderRawText(data.raw_text || '');
   renderMRZ(data.mrz);
+  renderValidation(data.validation);
   renderDebug(data);
   showResults();
 
@@ -373,6 +374,127 @@ function renderMRZ(mrz) {
     <div class="mrz-block">
       <div class="mrz-badge">✓ MRZ ANIQLANDI</div>
       <table class="mrz-table">${rows}</table>
+    </div>
+  `;
+}
+
+function renderValidation(val) {
+  const el = document.getElementById('validationContent');
+  if (!el) return;
+
+  if (!val) {
+    el.innerHTML = `
+      <div style="color:var(--text3);font-size:13px;padding:30px 0;text-align:center">
+        🛡️ Ushbu so'rov uchun validatsiya ma'lumotlari mavjud emas.
+      </div>
+    `;
+    return;
+  }
+
+  const isPass = val.overall_status === 'PASS';
+  const isFail = val.overall_status === 'FAIL';
+  const statusClass = isPass ? 'val-pass' : (isFail ? 'val-fail' : 'val-warn');
+  const statusBadge = isPass 
+    ? '<span class="status-tag tag-pass">✅ TASDIQLANDI (PASS)</span>'
+    : (isFail
+      ? '<span class="status-tag tag-fail">🚨 SHUBHALI / XATO (FAIL)</span>'
+      : '<span class="status-tag tag-warn">⚠️ QISMAN TEKSHIRILDI</span>');
+
+  const authBadge = val.is_authentic 
+    ? '<span class="status-tag tag-pass">🛡️ Haqiqiy hujjat</span>'
+    : '<span class="status-tag tag-fail">⚠️ Fraud Alert</span>';
+
+  // Alerts
+  let alertsHtml = '';
+  if (val.fraud_alerts && val.fraud_alerts.length > 0) {
+    alertsHtml = `
+      <div class="val-alert-box">
+        <div class="val-alert-title">🚨 Aniqlangan Ogohlantirishlar (Fraud Alerts):</div>
+        <ul>
+          ${val.fraud_alerts.map(a => `<li>${escapeHtml(a)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  // Auto corrections
+  let corrHtml = '';
+  if (val.auto_corrections_applied && val.auto_corrections_applied.length > 0) {
+    corrHtml = `
+      <div class="val-corr-box">
+        <span>✨ <strong>Matematik Avto-Tuzatish (Auto-Correction):</strong></span>
+        <ul>
+          ${val.auto_corrections_applied.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  // MRZ Checksums
+  const mrz = val.mrz_checksums || {};
+  const docBadge = mrz.document_number_valid === true ? '<span class="text-ok">✅ To\'g\'ri</span>' : (mrz.document_number_valid === false ? '<span class="text-fail">❌ Mos emas</span>' : '<span class="text-muted">— N/A</span>');
+  const birthBadge = mrz.birth_date_valid === true ? '<span class="text-ok">✅ To\'g\'ri</span>' : (mrz.birth_date_valid === false ? '<span class="text-fail">❌ Mos emas</span>' : '<span class="text-muted">— N/A</span>');
+  const expBadge = mrz.expiry_date_valid === true ? '<span class="text-ok">✅ To\'g\'ri</span>' : (mrz.expiry_date_valid === false ? '<span class="text-fail">❌ Mos emas</span>' : '<span class="text-muted">— N/A</span>');
+  const compBadge = mrz.composite_valid === true ? '<span class="text-ok">✅ To\'g\'ri</span>' : (mrz.composite_valid === false ? '<span class="text-fail">❌ Mos emas</span>' : '<span class="text-muted">— N/A</span>');
+
+  // PINFL Cross Check
+  const pinfl = val.pinfl_cross_check || {};
+  const pinflStatus = pinfl.status === 'verified' 
+    ? '<span class="text-ok">✅ 100% Mos keldi</span>' 
+    : (pinfl.status === 'not_applicable' ? '<span class="text-muted">ℹ️ ID Front (JSHSHIR yo\'q)</span>' : '<span class="text-fail">⚠️ Nomuvofiq</span>');
+  const bMatch = pinfl.birth_date_matches === true ? '<span class="text-ok">✅ Mos (Tug\'ilgan sana)</span>' : (pinfl.birth_date_matches === false ? '<span class="text-fail">❌ Nomuvofiq</span>' : '<span class="text-muted">— N/A</span>');
+  const gMatch = pinfl.gender_matches === true ? '<span class="text-ok">✅ Mos (Jinsi)</span>' : (pinfl.gender_matches === false ? '<span class="text-fail">❌ Nomuvofiq</span>' : '<span class="text-muted">— N/A</span>');
+
+  el.innerHTML = `
+    <div class="val-panel ${statusClass}">
+      <div class="val-header">
+        <div class="val-title-wrap">
+          <div class="val-title-icon">🛡️</div>
+          <div>
+            <h3 class="val-title-text">Xavfsizlik va Anti-Fraud Xulosasi</h3>
+            <p class="val-sub-text">ICAO 9303 7-3-1 Nazorat Yig'indisi va O'zbekiston JSHSHIR kross-tekshiruvi</p>
+          </div>
+        </div>
+        <div class="val-badges-wrap">
+          ${statusBadge}
+          ${authBadge}
+        </div>
+      </div>
+
+      ${alertsHtml}
+      ${corrHtml}
+
+      <div class="val-grid">
+        <!-- MRZ Checksums -->
+        <div class="val-card">
+          <div class="val-card-header">
+            <span>🔢 ICAO 9303 MRZ Nazorat Sonlari</span>
+            <span>${mrz.has_mrz ? (mrz.all_passed ? '✅ TO\'G\'RI' : '⚠️ TEKSHIRING') : '— MRZ yo\'q'}</span>
+          </div>
+          <div class="val-card-body">
+            <div class="val-row"><span>Hujjat raqami nazorat soni:</span><strong>${docBadge}</strong></div>
+            <div class="val-row"><span>Tug'ilgan sana nazorat soni:</span><strong>${birthBadge}</strong></div>
+            <div class="val-row"><span>Amal qilish muddati nazorat soni:</span><strong>${expBadge}</strong></div>
+            <div class="val-row"><span>Kompozit (umumiy) nazorat soni:</span><strong>${compBadge}</strong></div>
+          </div>
+        </div>
+
+        <!-- PINFL Cross Check -->
+        <div class="val-card">
+          <div class="val-card-header">
+            <span>🪪 JSHSHIR (PINFL) Kross-Tekshiruvi</span>
+            <span>${pinflStatus}</span>
+          </div>
+          <div class="val-card-body">
+            <div class="val-row"><span>Tug'ilgan sana mosligi (DDMMYY):</span><strong>${bMatch}</strong></div>
+            <div class="val-row"><span>Jins va asr mosligi (1-raqam):</span><strong>${gMatch}</strong></div>
+            ${pinfl.pinfl_parsed ? `
+              <div class="val-row"><span>JSHSHIR dagi tug'ilgan sana:</span><strong>${escapeHtml(pinfl.pinfl_parsed.birth_date)}</strong></div>
+              <div class="val-row"><span>JSHSHIR dagi jins va asr:</span><strong>${escapeHtml(pinfl.pinfl_parsed.gender)} (${escapeHtml(pinfl.pinfl_parsed.century)})</strong></div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }

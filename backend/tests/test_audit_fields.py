@@ -35,3 +35,11 @@ for p in images:
         v = sf.get(k)
         icon = "✅" if v else "❌"
         print(f"  {icon} {k:18}: {v}")
+    
+    val = res.get('validation', {})
+    if val:
+        v_status = val.get('overall_status', 'N/A')
+        v_auth = "✅ Authentic" if val.get('is_authentic') else "⚠️ Warning"
+        print(f"  🛡️ Validation        : {v_status} ({v_auth})")
+        if val.get('fraud_alerts'):
+            print(f"  🚨 Alerts            : {val.get('fraud_alerts')}")

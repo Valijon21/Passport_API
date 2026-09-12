@@ -25,10 +25,12 @@ Ushbu tizim banklar, FinTech (to'lov tizimlari), mikroqarz tashkilotlari, mehmon
 - 🪪 **ID Karta Old Tomoni:** Familiya, Ism, Sharif, Tug'ilgan sana, Amal muddati, Berilgan sana, Hujjat raqami (`AD...`, `AE...`), Jinsi va Fuqaroligini to'liq ajratib olish.
 - 🔍 **ID Karta Orqa Tomoni (TD1 MRZ):** 3 qatorli mashina o'qiydigan zona (MRZ) va 14 xonali **JSHSHIR (PINFL)** ni maxsus binarizatsiya va whitelist orqali 100% aniqlikda o'qish.
 - 📗 **Eski Yashil Biometrik Pasport (TD3 MRZ):** 2 qatorli MRZ va ochiq matnli maydonlarni to'liq parslash.
-- 🛡️ **Zonal Ko'p Kanalli Filtrlash (Multi-Channel Color Passes):** Pushti O'zbekiston xaritasi, feruza to'lqinlar va gilyosh naqshlarini rang kanallari (Red, Green, Blue) va morfologik fon ayirish orqali zararsizlantirish.
+- 🛡️ **ICAO 9303 Nazorat Yig'indisi (Check Digit Engine):** Standart 7-3-1 vaznli algoritmi orqali hujjat raqami, tug'ilgan sana va amal qilish muddatining haqiqiyligini tekshirish hamda matematik avto-tuzatish (Auto-Correction).
+- 🚨 **JSHSHIR & Kross-Tekshiruv (Anti-Fraud KYC):** 14 xonali JSHSHIR ning 1-raqami (jins va asr) hamda 2–7 raqamlarini (DDMMYY) OCR orqali o'qilgan sana va jins bilan solishtirish (Soxtalashtirishni aniqlash).
+- 🎨 **Zonal Ko'p Kanalli Filtrlash (Multi-Channel Color Passes):** Pushti O'zbekiston xaritasi, feruza to'lqinlar va gilyosh naqshlarini rang kanallari (Red, Green, Blue) va morfologik fon ayirish orqali zararsizlantirish.
 - 🔄 **Aqlli Burchak Nazorati (Safe Deskew):** Tasvir aylanishini faqat $\pm15^\circ$ oralig'ida xavfsiz to'g'rilash (90° burilib ketish xatosi bartaraf etilgan).
 - ⚡ **Yuqori Tezlik:** Tasvirni qayta ishlash va maydonlarni ajratish o'rtacha **1.5 – 2.5 soniya** ichida yakunlanadi.
-- 💻 **Interaktiv Web UI:** Chiroyli "Side-by-Side" vizual tekshiruv interfeysi (suratni yuklash, skanerlash va natijalarni ko'rish).
+- 💻 **Interaktiv Web UI:** Chiroyli "Side-by-Side" vizual tekshiruv va **Validatsiya & Anti-Fraud** paneli.
 
 ---
 
@@ -43,11 +45,13 @@ Passport_API/
 │   │   └── wsgi.py
 │   ├── ocr_api/
 │   │   ├── ocr_engine.py        # ★ Asosiy Computer Vision va Tesseract OCR yadrosi
+│   │   ├── mrz_validator.py     # 🛡️ ICAO 9303 Check Digit va JSHSHIR Anti-Fraud dvigateli
 │   │   ├── views.py             # API endpoint nazoratchilari
 │   │   ├── serializers.py       # Serializatsiya va ma'lumotlar validatsiyasi
 │   │   └── urls.py              # API v1 marshrutlari
 │   ├── tests/
-│   │   └── test_audit_fields.py # 100% aniqlikni tekshiruvchi avtomatlashtirilgan test
+│   │   ├── test_audit_fields.py # 100% aniqlikni tekshiruvchi avtomatlashtirilgan test
+│   │   └── test_mrz_validation.py # ICAO 9303 va PINFL unit testlari
 │   ├── manage.py
 │   ├── requirements.txt         # Python kutubxonalari
 │   └── .env.example             # Konfiguratsiya namunasi
@@ -217,6 +221,21 @@ console.log(result.structured_fields);
     "issuing_authority": null
   },
   "mrz": null,
+  "validation": {
+    "is_authentic": true,
+    "overall_status": "PASS",
+    "mrz_checksums": {
+      "has_mrz": false,
+      "all_passed": false
+    },
+    "pinfl_cross_check": {
+      "status": "not_applicable",
+      "birth_date_matches": null,
+      "gender_matches": null
+    },
+    "fraud_alerts": [],
+    "auto_corrections_applied": []
+  },
   "confidence": 94.8,
   "processing_time_ms": 1840.4,
   "debug": {

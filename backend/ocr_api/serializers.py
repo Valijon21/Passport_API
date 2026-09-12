@@ -68,6 +68,7 @@ class OCRResponseSerializer(serializers.Serializer):
     raw_text = serializers.CharField()
     structured_fields = StructuredFieldsSerializer(allow_null=True)
     mrz = serializers.DictField(allow_null=True)
+    validation = serializers.DictField(allow_null=True, required=False)
     confidence = serializers.FloatField()
     processing_time_ms = serializers.FloatField()
     debug = serializers.DictField()

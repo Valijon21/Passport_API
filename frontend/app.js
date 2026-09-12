@@ -778,17 +778,204 @@ function closeModal() {
   document.getElementById('healthModal').style.display = 'none';
 }
 
-// ── KYC Selfie Match ─────────────────────────────────────────
+// ── KYC State & Live Camera ──────────────────────────────────
+let kycStream = null;
+let kycFacingMode = 'user'; // 'user' (front camera) or 'environment' (back camera)
+let kycCurrentMode = 'camera'; // 'camera' | 'upload'
+
 function openKYCModal() {
   const modal = document.getElementById('kycModal');
   if (!modal) return;
   modal.style.display = 'flex';
   log('KYC Selfie Match paneli ochildi', LEVELS.INFO);
+
+  // Auto-start camera if in camera mode and no selfie taken yet
+  if (kycCurrentMode === 'camera' && !state.selfieFile && !kycStream) {
+    startKYCCamera();
+  }
 }
 
 function closeKYCModal() {
+  stopKYCCamera();
   const modal = document.getElementById('kycModal');
   if (modal) modal.style.display = 'none';
+}
+
+function switchKYCMode(mode) {
+  kycCurrentMode = mode;
+  const btnCam = document.getElementById('btnModeCamera');
+  const btnUp = document.getElementById('btnModeUpload');
+  const camView = document.getElementById('kycCameraView');
+  const upView = document.getElementById('kycUploadView');
+  const camToolbar = document.getElementById('cameraToolbar');
+
+  if (mode === 'camera') {
+    if (btnCam) btnCam.classList.add('active');
+    if (btnUp) btnUp.classList.remove('active');
+    if (camView) camView.style.display = 'flex';
+    if (upView) upView.style.display = 'none';
+    if (!state.selfieFile) {
+      if (camToolbar) camToolbar.style.display = 'flex';
+      startKYCCamera();
+    }
+  } else {
+    if (btnUp) btnUp.classList.add('active');
+    if (btnCam) btnCam.classList.remove('active');
+    if (camView) camView.style.display = 'none';
+    if (upView) upView.style.display = 'flex';
+    if (camToolbar) camToolbar.style.display = 'none';
+    stopKYCCamera();
+  }
+}
+
+async function startKYCCamera() {
+  const video = document.getElementById('kycVideo');
+  const prompt = document.getElementById('cameraStartPrompt');
+  const guide = document.getElementById('cameraGuide');
+  const toolbar = document.getElementById('cameraToolbar');
+  const snapImg = document.getElementById('kycSnapshotImg');
+  const status = document.getElementById('kycSelfieStatus');
+  const btnSnap = document.getElementById('btnSnap');
+  const btnRetake = document.getElementById('btnRetake');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showError('Kamera qo\'llab-quvvatlanmaydi', 'Brauzeringiz kamerani qo\'llab-quvvatlamaydi. Fayl yuklash rejimidan foydalaning.');
+    switchKYCMode('upload');
+    return;
+  }
+
+  try {
+    stopKYCCamera();
+    if (status) status.textContent = 'Kamera ochilmoqda...';
+
+    const constraints = {
+      video: {
+        facingMode: { ideal: kycFacingMode },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false
+    };
+
+    kycStream = await navigator.mediaDevices.getUserMedia(constraints);
+    if (video) {
+      video.srcObject = kycStream;
+      video.style.display = 'block';
+    }
+
+    if (prompt) prompt.style.display = 'none';
+    if (guide) guide.style.display = 'flex';
+    if (toolbar) toolbar.style.display = 'flex';
+    if (snapImg) snapImg.style.display = 'none';
+    if (btnSnap) btnSnap.style.display = 'inline-flex';
+    if (btnRetake) btnRetake.style.display = 'none';
+
+    if (status) {
+      status.textContent = '● Jonli efir (Old kamera)';
+      status.className = 'kyc-photo-status text-ok';
+    }
+    log('Jonli old kamera ishga tushirildi', LEVELS.OK);
+
+  } catch (err) {
+    let msg = 'Kameradan foydalanish imkoni bo\'lmadi.';
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      msg = 'Kameraga ruxsat berilmadi. Brauzer sozlamalarida kameraga ruxsat bering yoki "Fayl" rejimidan foydalaning.';
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      msg = 'Qurilmada kamera topilmadi. Fayl orqali yuklang.';
+    }
+    if (status) {
+      status.textContent = 'Kamera ulanmadi';
+      status.className = 'kyc-photo-status text-fail';
+    }
+    showError('Kamera xatosi', msg);
+    switchKYCMode('upload');
+  }
+}
+
+function stopKYCCamera() {
+  if (kycStream) {
+    kycStream.getTracks().forEach(track => track.stop());
+    kycStream = null;
+  }
+}
+
+function captureKYCSnapshot() {
+  const video = document.getElementById('kycVideo');
+  const canvas = document.getElementById('kycCanvas');
+  const snapImg = document.getElementById('kycSnapshotImg');
+  const flash = document.getElementById('cameraFlash');
+  const guide = document.getElementById('cameraGuide');
+  const btnSnap = document.getElementById('btnSnap');
+  const btnRetake = document.getElementById('btnRetake');
+  const btnRun = document.getElementById('btnRunKYC');
+  const status = document.getElementById('kycSelfieStatus');
+
+  if (!video || !video.videoWidth) {
+    showError('Kadr olinmadi', 'Kamera hali tayyor emas. Bir oz kuting yoki qaytadan yoqing.');
+    return;
+  }
+
+  // Camera flash animation
+  if (flash) {
+    flash.classList.add('flash-active');
+    setTimeout(() => flash.classList.remove('flash-active'), 250);
+  }
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+
+  // Video is mirrored for user; mirror horizontally so snapshot matches user preview
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+  if (snapImg) {
+    snapImg.src = dataUrl;
+    snapImg.style.display = 'block';
+  }
+
+  // Hide live video and guide during snapshot review
+  if (video) video.style.display = 'none';
+  if (guide) guide.style.display = 'none';
+
+  // Toggle toolbar buttons
+  if (btnSnap) btnSnap.style.display = 'none';
+  if (btnRetake) btnRetake.style.display = 'inline-flex';
+
+  // Convert canvas to File/Blob for API request
+  canvas.toBlob((blob) => {
+    state.selfieFile = new File([blob], 'live_selfie.jpg', { type: 'image/jpeg' });
+    if (btnRun) btnRun.disabled = false;
+    if (status) {
+      status.textContent = '✓ Jonli selfi rasmga olindi';
+      status.className = 'kyc-photo-status text-ok';
+    }
+    log('Jonli selfi rasmga olindi va biometrik tahlilga tayyorlandi', LEVELS.OK);
+  }, 'image/jpeg', 0.95);
+
+  // Stop camera stream to release device hardware and turn off green LED
+  stopKYCCamera();
+}
+
+function retakeKYCSnapshot() {
+  const snapImg = document.getElementById('kycSnapshotImg');
+  const btnRun = document.getElementById('btnRunKYC');
+  const resBox = document.getElementById('kycResultBox');
+
+  if (snapImg) snapImg.style.display = 'none';
+  if (btnRun) btnRun.disabled = true;
+  if (resBox) resBox.style.display = 'none';
+  state.selfieFile = null;
+
+  startKYCCamera();
+}
+
+function switchCameraFacing() {
+  kycFacingMode = kycFacingMode === 'user' ? 'environment' : 'user';
+  log(`Kamera almashtirildi: ${kycFacingMode === 'user' ? 'Old (Selfie)' : 'Asosiy (Orqa)'}`, LEVELS.INFO);
+  startKYCCamera();
 }
 
 function handleSelfieFile(e) {
@@ -815,7 +1002,7 @@ function handleSelfieFile(e) {
       status.className = 'kyc-photo-status text-ok';
     }
     if (btn) btn.disabled = false;
-    log(`Selfie tanlandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.INFO);
+    log(`Selfie fayli tanlandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.INFO);
   };
   reader.readAsDataURL(file);
 }

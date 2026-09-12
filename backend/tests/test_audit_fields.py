@@ -10,8 +10,12 @@ django.setup()
 
 from ocr_api.ocr_engine import extract_id_card
 
-IMG_DIR = Path(r"D:\Proyekt\idcard2\pasport_img")
-images = sorted(list(IMG_DIR.glob("*.*")))
+IMG_DIR = Path(__file__).resolve().parent.parent.parent / "pasport_img"
+images = sorted(list(IMG_DIR.glob("*.*"))) if IMG_DIR.exists() else []
+
+if not images:
+    print(f"[INFO] '{IMG_DIR}' papkasida sinov rasmlari topilmadi.")
+    sys.exit(0)
 
 for p in images:
     if p.suffix.lower() not in ['.jpg', '.jpeg', '.png', '.webp']:

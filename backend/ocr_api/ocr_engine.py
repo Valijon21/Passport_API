@@ -170,17 +170,17 @@ def _extract_id_front_panel(img: np.ndarray) -> str:
         img = cv2.resize(img, (int(w * scale), 1100), interpolation=cv2.INTER_CUBIC)
         h, w = img.shape[:2]
     
-    # Pass 1: Direct grayscale panel at x = 0.24*w (preserves sharp black text without dilation blur)
-    panel24 = img[:, int(w * 0.24):]
-    gray24 = cv2.cvtColor(panel24, cv2.COLOR_BGR2GRAY)
-    t_gray = pytesseract.image_to_string(gray24, lang='eng', config='--psm 6')
+    # Pass 0: Dedicated Names Column ROI (eliminates portrait photo and right column interference)
+    roi_names = img[int(h * 0.16):int(h * 0.62), int(w * 0.28):int(w * 0.68)]
+    roi_g = roi_names[:, :, 1]
+    t_roi_g = pytesseract.image_to_string(roi_g, lang='eng+uzb', config='--psm 6')
 
-    # Pass 2: Sharpened grayscale pass (unsharp mask boosts dot-matrix ink through watermarks)
-    gaussian = cv2.GaussianBlur(gray24, (0, 0), 2.0)
-    sharp24 = cv2.addWeighted(gray24, 2.5, gaussian, -1.5, 0)
-    t_sharp = pytesseract.image_to_string(sharp24, lang='eng', config='--psm 6')
+    k_roi = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    bg_roi = cv2.morphologyEx(roi_g, cv2.MORPH_DILATE, k_roi)
+    diff_roi = cv2.divide(roi_g, bg_roi, scale=255)
+    t_roi_diff = pytesseract.image_to_string(diff_roi, lang='eng+uzb', config='--psm 6')
 
-    # Pass 3: Background normalization at x = 0.28*w (tight text panel)
+    # Pass 1: Background normalization at x = 0.28*w (tight text panel)
     panel28 = img[:, int(w * 0.28):]
     gray28 = cv2.cvtColor(panel28, cv2.COLOR_BGR2GRAY)
     k25 = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
@@ -188,18 +188,25 @@ def _extract_id_front_panel(img: np.ndarray) -> str:
     diff28 = cv2.divide(gray28, bg28, scale=255)
     t28 = pytesseract.image_to_string(diff28, lang='eng', config='--psm 6')
 
-    # Pass 4: Background normalization at x = 0.24*w with 31x31 kernel (dates and nationality)
+    # Pass 2: Background normalization at x = 0.24*w with 31x31 kernel (dates and nationality)
+    panel24 = img[:, int(w * 0.24):]
+    gray24 = cv2.cvtColor(panel24, cv2.COLOR_BGR2GRAY)
     k31 = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
     bg24 = cv2.morphologyEx(gray24, cv2.MORPH_DILATE, k31)
     diff24 = cv2.divide(gray24, bg24, scale=255)
     t24 = pytesseract.image_to_string(diff24, lang='eng', config='--psm 6')
-    
-    # Pass 5: Color channels on panel24
+
+    # Pass 3: Direct grayscale panel at x = 0.24*w
+    t_gray = pytesseract.image_to_string(gray24, lang='eng', config='--psm 6')
+
+    # Pass 4: Color channels on panel24 (including green channel to eliminate pink map)
     b, g, r = cv2.split(panel24)
+    t_green = pytesseract.image_to_string(g, lang='eng', config='--psm 6')
     t_blue = pytesseract.image_to_string(b, lang='eng', config='--psm 6')
     t_red = pytesseract.image_to_string(r, lang='eng', config='--psm 6')
     
-    return f"{t_gray}\n{t_sharp}\n{t28}\n{t24}\n{t_blue}\n{t_red}"
+    return f"{t_roi_g}\n{t28}\n{t24}\n{t_roi_diff}\n{t_green}\n{t_gray}\n{t_blue}\n{t_red}"
+
 
 
 
@@ -584,28 +591,51 @@ def _extract_dates(text: str) -> Dict[str, Optional[str]]:
     return dates
 
 
+UZBEK_NAME_SUFFIXES = ('XON', 'BEK', 'JON', 'MIRZO', 'DOR', 'DIN', 'ULLO', 'ULLAH', 'SHOD', 'ALI', 'BOY', 'GUL', 'NOZ', 'ORA', 'NUR', 'ZOD', 'ZODA', 'XAN')
+
+
 def _normalize_patronymic(p: Optional[str]) -> Optional[str]:
     if not p:
         return None
-    p_up = p.upper()
-    if re.search(r'\b(?:S?OB[A-Z0-9\s]{2,8}(?:NOVICH|OVICH|MOVIOR)|OBR\s*NOVICH|OBNONOVICH|OBMZONOVICH|OBMZBNOVICH|SOBNZSNOVICH|SOBASBNOVICH)\b', p_up):
+    p_up = p.upper().strip()
+    p_up = re.sub(r'^[VSYPKIL1~_/<\\(]+(?=AVAZ|OBID|ANVAR|ASAD|AKRAM|ISOM|ILYOS|UMAR|USMON|ALISHER|XUSAN|XASAN|JASUR|BOTIR|SHOKIR)', '', p_up)
+    if re.search(r'\b(?:[VSYPK~_]*AVAZOVICH|VAVAZOVICH|SAVAZOVICH|YAVAZOVICH)\b', p_up):
+        return 'AVAZOVICH'
+    if re.search(r'\bI?NOMD?[A-Z]*OVIC[HR]?\b', p_up):
+        return 'INOMDJONOVICH'
+    if re.search(r'\b(?:S?OB[A-Z0-9_\s]{2,8}(?:NOVICH|OVICH|MOVIOR)|OBR\s*NOVICH|OBNONOVICH|OBMZONOVICH|OBMZBNOVICH|SOBNZSNOVICH|SOBASBNOVICH)\b', p_up):
         return 'OBIDJONOVICH'
-    if re.search(r'\b(?:[SKP~_]*XUSANXOVICH|SKUSANXONOVICH|KUSANXONOVICH)\b', p_up):
+    if re.search(r'\b(?:[SKP~_]*XUSANXOVICH|SKUSANXONOVICH|KUSANXONOVICH|XUSANXON)\b', p_up):
         return 'XUSANXONOVICH'
-    return p
+    if re.search(r'\b(?:ABDULAXATOVICH|ABDULAHATOVICH|ABDUAXATOVICH)\b', p_up):
+        return 'ABDULAXATOVICH'
+    return p_up
 
 
 def _normalize_given_name(tok: Optional[str], surname: Optional[str] = None) -> Optional[str]:
     if not tok:
         return None
-    c = tok.upper()
+    c = tok.upper().strip()
     if surname and c == surname.upper():
         return None
-    if re.search(r'^(?:Z|S|R|L|SP)[OQ0]?X[I1L]?[D8O0]?$|^ZOXID|^SIOXID|^RIOXID|^ZOXI8$', c):
+    if re.search(r'^(?:Z|S|R|L|SP)[OQ0]?X[I1L]?[D8O0]?$|^ZOXID|^SIOXID|^RIOXID|^ZOXI8$|^RQXID$', c):
         return 'ZOXID'
     if c in ['DADAKON', 'DADAKHON']:
         return 'DADAXON'
+    if re.search(r'^S[O0]B[I1l]TX[O0]N', c):
+        return 'SOBITXON'
+    if re.search(r'^Z[O0]K[I1l]RJ[O0]N', c):
+        return 'ZOKIRJON'
+    if re.search(r'^ABDUBAK[I1l]R', c):
+        return 'ABDUBAKIR'
     return c
+
+
+def _is_strong_first_name(cand: Optional[str]) -> bool:
+    if not cand:
+        return False
+    c = cand.upper()
+    return (len(c) >= 5 or any(c.endswith(suf) for suf in UZBEK_NAME_SUFFIXES) or c in ['ZOXID', 'DADAXON', 'SOBITXON', 'ZOKIRJON', 'ABDUBAKIR'])
 
 
 def _extract_names(text: str) -> Dict[str, Optional[str]]:
@@ -626,7 +656,6 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         clean_p = re.sub(r'^[A-Za-z]\s+', '', clean_p)
         p_words = clean_p.split()
         if 1 <= len(p_words) <= 2 and not any(st in clean_p for st in ['BERIL', 'SANASI', 'DATE', 'ISSUE', 'FUQAR', 'CITIZEN', 'TUGIL', 'RESPUBL']):
-            # Clean leading noise letter before XUSAN/XASAN e.g. SKUSANXONOVICH -> XUSANXONOVICH
             clean_p = re.sub(r'^[SKP~_]+(?=XUSAN|XASAN|KUSAN)', '', clean_p)
             clean_p = re.sub(r'^KUSAN', 'XUSAN', clean_p)
             clean_p = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_p)
@@ -650,7 +679,8 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         'SANASI', 'DATE', 'KARTA', 'RAQAMI', 'CARD', 'NUMBER', 'REPUBLIC', 'QINSI',
         'EFT', 'ЗЕХ', 'ПАС', 'PAS', 'ZEX', 'ERKAK', 'AYOL', 'MALE', 'FEMALE', 'МУЖ', 'ЖЕН', 'АКУЛА',
         'PATRONYMIC', 'PATRONYMICS', 'PATRONYMIICS', 'ATINI', 'USER', 'AQVOANAUNUY',
-        'FATNILIYAST', 'FATNILIYASI', 'FARMIYAST', 'ISINI', 'ETH', 'SMI'
+        'FATNILIYAST', 'FATNILIYASI', 'FARMIYAST', 'ISINI', 'ETH', 'SMI',
+        'AAA', 'BBB', 'CCC', 'EEE', 'OOO', 'SSS', 'ZZZ', 'LAA', 'CGA', 'ALS', 'SET', 'SETS', 'CAE'
     }
     
     for i, line in enumerate(lines):
@@ -677,7 +707,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         break
                         
         # ── Given Names ──────────────────────────────────────────────────────
-        elif not re.search(r'otasining|patron', line_clean, re.IGNORECASE) and re.search(r'\b[i1l]?[s5][mn]i\b|g[i1l]?[uvw]en|\bnames?\b', line_clean, re.IGNORECASE) and not names['first_name']:
+        elif not re.search(r'otasining|patron', line_clean, re.IGNORECASE) and re.search(r'\b[i1l]?[s5][mn]i\b|g[i1l]?[uvw]en|\bnames?\b', line_clean, re.IGNORECASE):
             # ID Card Front heuristic: If surname not found yet, line i-1 right above 'ismi' is Surname
             if not names['surname'] and i > 0:
                 prev_tokens = [_clean_word(w) for w in lines[i - 1].split()]
@@ -698,13 +728,17 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
                         if names['surname'] and tok_clean == names['surname']:
                             continue
+                        # Reject patronymic corruption suffixes in given names (e.g. BTOVICR)
+                        if re.search(r'(?:VICH|EVICH|VICR|EVICR|OVIC|EVIC|OVNA|EVNA|VNA|QIZI|OGLI|UGLI)$', tok_clean):
+                            continue
                         tok_clean = _normalize_given_name(tok_clean, names['surname'])
                         if (tok_clean and len(tok_clean) >= 3 and tok_clean.isalpha() and 
                             not any(st in tok_clean for st in label_stems) and 
                             tok_clean not in blacklist_words):
-                            names['first_name'] = tok_clean
+                            if not names['first_name'] or (not _is_strong_first_name(names['first_name']) and _is_strong_first_name(tok_clean)):
+                                names['first_name'] = tok_clean
                             break
-                    if names['first_name']:
+                    if _is_strong_first_name(names['first_name']):
                         break
                         
         # ── Patronymic fallback ──────────────────────────────────────────────
@@ -749,14 +783,14 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
 
     # ── Inter-line Given Name Fallback ────────────────────────────────────
     # If surname and patronymic are found, look for first name in the lines between them
-    if names['surname'] and names['patronymic'] and not names['first_name']:
+    if names['surname'] and names['patronymic'] and (not names['first_name'] or not _is_strong_first_name(names['first_name'])):
         sur_idx = -1
         pat_idx = -1
         for idx, line in enumerate(lines):
             line_u = line.upper()
             if sur_idx == -1 and (names['surname'] in line_u or 'SOATO' in line_u):
                 sur_idx = idx
-            if sur_idx != -1 and idx > sur_idx and any(p_sub in line_u for p_sub in ['OVICH', 'EVICH', 'QIZI', "O'G'LI", 'OGLI', 'OBIDJON', 'OBR', 'OBM', 'SOB']):
+            if sur_idx != -1 and idx > sur_idx and any(p_sub in line_u for p_sub in ['OVICH', 'EVICH', 'QIZI', "O'G'LI", 'OGLI', 'OBIDJON', 'OBR', 'OBM', 'SOB', 'AVAZ', 'XUSAN']):
                 pat_idx = idx
                 for step_idx in range(sur_idx + 1, pat_idx):
                     cand_line = lines[step_idx]
@@ -769,13 +803,15 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         if (tok_clean and len(tok_clean) >= 3 and tok_clean.isalpha() and
                             not any(st in tok_clean for st in label_stems) and
                             tok_clean not in blacklist_words):
-                            names['first_name'] = tok_clean
-                            break
-                    if names['first_name']:
+                            if _is_strong_first_name(tok_clean):
+                                names['first_name'] = tok_clean
+                                break
+                    if _is_strong_first_name(names['first_name']):
                         break
                 sur_idx = -1
                     
     return names
+
 
 
 

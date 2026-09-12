@@ -782,6 +782,7 @@ function closeModal() {
 let kycStream = null;
 let kycFacingMode = 'user'; // 'user' (front camera) or 'environment' (back camera)
 let kycCurrentMode = 'camera'; // 'camera' | 'upload'
+let isCameraStarting = false;
 
 function openKYCModal() {
   const modal = document.getElementById('kycModal');
@@ -807,7 +808,6 @@ function switchKYCMode(mode) {
   const btnUp = document.getElementById('btnModeUpload');
   const camView = document.getElementById('kycCameraView');
   const upView = document.getElementById('kycUploadView');
-  const camToolbar = document.getElementById('cameraToolbar');
 
   if (mode === 'camera') {
     if (btnCam) btnCam.classList.add('active');
@@ -815,7 +815,6 @@ function switchKYCMode(mode) {
     if (camView) camView.style.display = 'flex';
     if (upView) upView.style.display = 'none';
     if (!state.selfieFile) {
-      if (camToolbar) camToolbar.style.display = 'flex';
       startKYCCamera();
     }
   } else {
@@ -823,79 +822,127 @@ function switchKYCMode(mode) {
     if (btnCam) btnCam.classList.remove('active');
     if (camView) camView.style.display = 'none';
     if (upView) upView.style.display = 'flex';
-    if (camToolbar) camToolbar.style.display = 'none';
     stopKYCCamera();
   }
 }
 
 async function startKYCCamera() {
+  if (isCameraStarting) return;
+  isCameraStarting = true;
+
   const video = document.getElementById('kycVideo');
   const prompt = document.getElementById('cameraStartPrompt');
   const guide = document.getElementById('cameraGuide');
-  const toolbar = document.getElementById('cameraToolbar');
-  const snapImg = document.getElementById('kycSnapshotImg');
+  const topBar = document.getElementById('cameraTopBar');
+  const shutterBar = document.getElementById('cameraShutterBar');
+  const loader = document.getElementById('cameraLoader');
+  const snapOverlay = document.getElementById('snapshotOverlay');
   const status = document.getElementById('kycSelfieStatus');
-  const btnSnap = document.getElementById('btnSnap');
-  const btnRetake = document.getElementById('btnRetake');
+  const facingLabelEl = document.getElementById('camFacingLabel');
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showError('Kamera qo\'llab-quvvatlanmaydi', 'Brauzeringiz kamerani qo\'llab-quvvatlamaydi. Fayl yuklash rejimidan foydalaning.');
+    showError('Kamera qo\'llab-quvvatlanmaydi', 'Brauzeringiz kamerani qo\'llab-quvvatlamaydi. "Fayl" rejimidan foydalaning.');
     switchKYCMode('upload');
+    isCameraStarting = false;
     return;
   }
 
   try {
     stopKYCCamera();
-    if (status) status.textContent = 'Kamera ochilmoqda...';
 
+    if (prompt) prompt.style.display = 'none';
+    if (snapOverlay) snapOverlay.style.display = 'none';
+    if (loader) loader.style.display = 'flex';
+    if (status) {
+      status.textContent = 'Kamera ulanmoqda...';
+      status.className = 'kyc-photo-status text-muted';
+    }
+
+    const facingText = kycFacingMode === 'user' ? 'Old kamera' : 'Orqa kamera';
+    if (facingLabelEl) facingLabelEl.textContent = facingText;
+
+    // First attempt: ideal constraints
+    let stream = null;
     const constraints = {
       video: {
-        facingMode: { ideal: kycFacingMode },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        facingMode: kycFacingMode ? { ideal: kycFacingMode } : 'user',
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1080 }
       },
       audio: false
     };
 
-    kycStream = await navigator.mediaDevices.getUserMedia(constraints);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (firstErr) {
+      console.warn('Initial camera constraints failed, attempting fallback {video: true}:', firstErr);
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+
+    kycStream = stream;
+
     if (video) {
-      video.srcObject = kycStream;
+      video.srcObject = stream;
       video.style.display = 'block';
+
+      // Wait for camera to actually stream frames before rendering UI to avoid black frame
+      video.onloadeddata = async () => {
+        try {
+          await video.play();
+        } catch (playErr) {
+          console.warn('Autoplay handled:', playErr);
+        }
+        if (loader) loader.style.display = 'none';
+        if (guide) guide.style.display = 'flex';
+        if (topBar) topBar.style.display = 'flex';
+        if (shutterBar) shutterBar.style.display = 'flex';
+        if (status) {
+          status.textContent = `● Jonli efir (${facingText})`;
+          status.className = 'kyc-photo-status text-ok';
+        }
+      };
+
+      // Direct play call as well
+      try {
+        await video.play();
+      } catch (e) {}
     }
 
-    if (prompt) prompt.style.display = 'none';
-    if (guide) guide.style.display = 'flex';
-    if (toolbar) toolbar.style.display = 'flex';
-    if (snapImg) snapImg.style.display = 'none';
-    if (btnSnap) btnSnap.style.display = 'inline-flex';
-    if (btnRetake) btnRetake.style.display = 'none';
-
-    if (status) {
-      status.textContent = '● Jonli efir (Old kamera)';
-      status.className = 'kyc-photo-status text-ok';
-    }
-    log('Jonli old kamera ishga tushirildi', LEVELS.OK);
+    log(`Jonli kamera ishga tushirildi (${facingText})`, LEVELS.OK);
 
   } catch (err) {
+    console.error('Camera init error:', err);
     let msg = 'Kameradan foydalanish imkoni bo\'lmadi.';
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-      msg = 'Kameraga ruxsat berilmadi. Brauzer sozlamalarida kameraga ruxsat bering yoki "Fayl" rejimidan foydalaning.';
+      msg = 'Kameraga ruxsat berilmadi. Brauzer manzil qatorida (URL yonida) kamera belgisini bosib ruxsat bering yoki "Fayl" rejimidan foydalaning.';
     } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-      msg = 'Qurilmada kamera topilmadi. Fayl orqali yuklang.';
+      msg = 'Qurilmada kamera topilmadi. Fayl yuklash rejimidan foydalaning.';
+    } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      msg = 'Kamera boshqa dastur tomonidan band qilingan. Iltimos, boshqa ilovalarni yoping.';
     }
+
+    if (loader) loader.style.display = 'none';
     if (status) {
       status.textContent = 'Kamera ulanmadi';
       status.className = 'kyc-photo-status text-fail';
     }
     showError('Kamera xatosi', msg);
     switchKYCMode('upload');
+  } finally {
+    isCameraStarting = false;
   }
 }
 
 function stopKYCCamera() {
   if (kycStream) {
-    kycStream.getTracks().forEach(track => track.stop());
+    kycStream.getTracks().forEach(track => {
+      try { track.stop(); } catch (e) {}
+    });
     kycStream = null;
+  }
+  const video = document.getElementById('kycVideo');
+  if (video) {
+    video.srcObject = null;
   }
 }
 
@@ -903,69 +950,78 @@ function captureKYCSnapshot() {
   const video = document.getElementById('kycVideo');
   const canvas = document.getElementById('kycCanvas');
   const snapImg = document.getElementById('kycSnapshotImg');
+  const snapOverlay = document.getElementById('snapshotOverlay');
   const flash = document.getElementById('cameraFlash');
   const guide = document.getElementById('cameraGuide');
-  const btnSnap = document.getElementById('btnSnap');
-  const btnRetake = document.getElementById('btnRetake');
+  const topBar = document.getElementById('cameraTopBar');
+  const shutterBar = document.getElementById('cameraShutterBar');
   const btnRun = document.getElementById('btnRunKYC');
   const status = document.getElementById('kycSelfieStatus');
 
-  if (!video || !video.videoWidth) {
-    showError('Kadr olinmadi', 'Kamera hali tayyor emas. Bir oz kuting yoki qaytadan yoqing.');
+  if (!video || !video.videoWidth || video.videoWidth === 0) {
+    showError('Kamera tayyor emas', 'Kamera hali to\'liq yuklanmadi. 1 soniya kuting yoki qaytadan yoqing.');
     return;
   }
 
   // Camera flash animation
   if (flash) {
     flash.classList.add('flash-active');
-    setTimeout(() => flash.classList.remove('flash-active'), 250);
+    setTimeout(() => flash.classList.remove('flash-active'), 180);
   }
 
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  const vw = video.videoWidth || 640;
+  const vh = video.videoHeight || 480;
+  canvas.width = vw;
+  canvas.height = vh;
   const ctx = canvas.getContext('2d');
 
-  // Video is mirrored for user; mirror horizontally so snapshot matches user preview
-  ctx.translate(canvas.width, 0);
-  ctx.scale(-1, 1);
+  // If user facing mode, flip horizontally so selfie photo matches the user preview exactly
+  if (kycFacingMode === 'user') {
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+  }
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-  if (snapImg) {
-    snapImg.src = dataUrl;
-    snapImg.style.display = 'block';
-  }
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  if (snapImg) snapImg.src = dataUrl;
+  if (snapOverlay) snapOverlay.style.display = 'flex';
 
-  // Hide live video and guide during snapshot review
-  if (video) video.style.display = 'none';
+  // Hide live controls and video
   if (guide) guide.style.display = 'none';
+  if (topBar) topBar.style.display = 'none';
+  if (shutterBar) shutterBar.style.display = 'none';
+  if (video) video.style.display = 'none';
 
-  // Toggle toolbar buttons
-  if (btnSnap) btnSnap.style.display = 'none';
-  if (btnRetake) btnRetake.style.display = 'inline-flex';
-
-  // Convert canvas to File/Blob for API request
+  // Convert canvas to File/Blob for API
   canvas.toBlob((blob) => {
     state.selfieFile = new File([blob], 'live_selfie.jpg', { type: 'image/jpeg' });
-    if (btnRun) btnRun.disabled = false;
+    if (btnRun) {
+      btnRun.disabled = false;
+      btnRun.classList.add('btn-pulse');
+    }
     if (status) {
-      status.textContent = '✓ Jonli selfi rasmga olindi';
+      status.textContent = '✓ Jonli biometrik selfie olindi';
       status.className = 'kyc-photo-status text-ok';
     }
-    log('Jonli selfi rasmga olindi va biometrik tahlilga tayyorlandi', LEVELS.OK);
-  }, 'image/jpeg', 0.95);
+    log('Jonli biometrik selfie muvaffaqiyatli olindi va tahlilga tayyorlandi', LEVELS.OK);
+  }, 'image/jpeg', 0.92);
 
-  // Stop camera stream to release device hardware and turn off green LED
+  // Stop camera hardware to free the camera device immediately
   stopKYCCamera();
 }
 
 function retakeKYCSnapshot() {
+  const snapOverlay = document.getElementById('snapshotOverlay');
   const snapImg = document.getElementById('kycSnapshotImg');
   const btnRun = document.getElementById('btnRunKYC');
   const resBox = document.getElementById('kycResultBox');
 
-  if (snapImg) snapImg.style.display = 'none';
-  if (btnRun) btnRun.disabled = true;
+  if (snapOverlay) snapOverlay.style.display = 'none';
+  if (snapImg) snapImg.src = '';
+  if (btnRun) {
+    btnRun.disabled = true;
+    btnRun.classList.remove('btn-pulse');
+  }
   if (resBox) resBox.style.display = 'none';
   state.selfieFile = null;
 
@@ -974,7 +1030,7 @@ function retakeKYCSnapshot() {
 
 function switchCameraFacing() {
   kycFacingMode = kycFacingMode === 'user' ? 'environment' : 'user';
-  log(`Kamera almashtirildi: ${kycFacingMode === 'user' ? 'Old (Selfie)' : 'Asosiy (Orqa)'}`, LEVELS.INFO);
+  log(`Kamera almashtirildi: ${kycFacingMode === 'user' ? 'Old (Selfie)' : 'Orqa kamera'}`, LEVELS.INFO);
   startKYCCamera();
 }
 
@@ -1001,7 +1057,10 @@ function handleSelfieFile(e) {
       status.textContent = `✓ Yuklandi: ${file.name.substring(0, 16)}...`;
       status.className = 'kyc-photo-status text-ok';
     }
-    if (btn) btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.add('btn-pulse');
+    }
     log(`Selfie fayli tanlandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.INFO);
   };
   reader.readAsDataURL(file);
@@ -1058,9 +1117,22 @@ async function runKYCFaceMatch() {
   } catch (err) {
     resBox.style.display = 'block';
     banner.className = 'kyc-result-banner mismatch';
-    banner.innerHTML = `<span>🚨 Xatolik: ${escapeHtml(err.message || 'Tahlil qilib bo\'lmadi')}</span>`;
-    details.innerHTML = '<span>Iltimos, har ikkala rasmda yuz aniq ko\'rinayotganini tekshiring.</span>';
-    log(`KYC Xatosi: ${err.message}`, LEVELS.ERROR);
+
+    let errorMsg = err.message || 'Tahlil qilib bo\'lmadi';
+    let detailMsg = 'Iltimos, har ikkala rasmda yuz aniq ko\'rinayotganini tekshiring.';
+
+    if (err instanceof APIError && err.body) {
+      if (err.body.error) errorMsg = err.body.error;
+      if (err.body.details) {
+        detailMsg = typeof err.body.details === 'object' 
+          ? Object.values(err.body.details).flat().join(', ')
+          : String(err.body.details);
+      }
+    }
+
+    banner.innerHTML = `<span>🚨 Xatolik: ${escapeHtml(errorMsg)}</span>`;
+    details.innerHTML = `<span>${escapeHtml(detailMsg)}</span>`;
+    log(`KYC Xatosi: ${errorMsg}`, LEVELS.ERROR);
   } finally {
     btn.disabled = false;
     btn.textContent = '⚡ Solishtirish (Face Match)';

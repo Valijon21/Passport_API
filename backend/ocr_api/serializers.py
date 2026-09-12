@@ -76,6 +76,19 @@ class OCRResponseSerializer(serializers.Serializer):
     error = serializers.CharField(allow_null=True)
 
 
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+ALLOWED_CONTENT_TYPES = [
+    'image/jpeg',
+    'image/png',
+    'image/bmp',
+    'image/webp',
+    'image/tiff',
+    'image/pjpeg',
+    'image/x-png',
+    'application/octet-stream',
+]
+
+
 class FaceMatchRequestSerializer(serializers.Serializer):
     """KYC 1:1 Face Match so'rovi uchun serializer."""
     document_image = serializers.ImageField(
@@ -95,16 +108,16 @@ class FaceMatchRequestSerializer(serializers.Serializer):
     )
 
     def validate_document_image(self, value):
-        from ocr_api.serializers import ALLOWED_CONTENT_TYPES, MAX_FILE_SIZE
-        if value.content_type not in ALLOWED_CONTENT_TYPES:
+        content_type = getattr(value, 'content_type', '') or ''
+        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
             raise serializers.ValidationError("Hujjat fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
         if value.size > MAX_FILE_SIZE:
             raise serializers.ValidationError("Hujjat fayl hajmi 10 MB dan oshmasligi kerak.")
         return value
 
     def validate_selfie_image(self, value):
-        from ocr_api.serializers import ALLOWED_CONTENT_TYPES, MAX_FILE_SIZE
-        if value.content_type not in ALLOWED_CONTENT_TYPES:
+        content_type = getattr(value, 'content_type', '') or ''
+        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
             raise serializers.ValidationError("Selfie fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
         if value.size > MAX_FILE_SIZE:
             raise serializers.ValidationError("Selfie fayl hajmi 10 MB dan oshmasligi kerak.")

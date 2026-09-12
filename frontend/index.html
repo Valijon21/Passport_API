@@ -6,7 +6,7 @@
 <title>O'zbekiston Hujjat OCR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=1.1.2">
+<link rel="stylesheet" href="style.css?v=1.2.0">
 </head>
 <body>
   <!-- ── HEADER ────────────────────────────────────────── -->
@@ -24,7 +24,10 @@
         <span>Hujjat<strong>OCR</strong></span>
       </div>
       <div class="header-right">
-        <span class="api-badge">API v1</span>
+        <a href="/api/docs/" target="_blank" class="btn-swagger" title="Interaktiv Swagger API Dokumentatsiyasi">
+          📚 API Docs
+        </a>
+        <span class="api-badge">API v1.2</span>
         <button class="btn-health" id="btnHealth" onclick="checkHealth()">
           <span class="health-dot" id="healthDot"></span>
           Holat
@@ -118,13 +121,30 @@
 
     <!-- Results -->
     <section class="results-section" id="resultsSection" style="display:none">
-      <!-- Confidence Meter -->
-      <div class="conf-bar-wrap">
-        <div class="section-label">OCR Aniqligi</div>
-        <div class="conf-bar">
-          <div class="conf-fill" id="confFill"></div>
+      <!-- Top Bar: Confidence Meter & Face Crop Avatar -->
+      <div class="result-top-bar">
+        <div class="conf-bar-wrap">
+          <div class="section-label">OCR Aniqligi</div>
+          <div class="conf-bar">
+            <div class="conf-fill" id="confFill"></div>
+          </div>
+          <div class="conf-stats" id="confStats"></div>
         </div>
-        <div class="conf-stats" id="confStats"></div>
+
+        <!-- Face Crop Badge (if portrait detected) -->
+        <div class="face-crop-card" id="faceCropCard" style="display:none">
+          <div class="face-crop-avatar-wrap">
+            <img id="faceCropImg" src="" alt="Shaxsiy surat" class="face-crop-avatar">
+            <span class="face-crop-check">✓</span>
+          </div>
+          <div class="face-crop-meta">
+            <div class="face-badge-title">👤 Hujjat Surati (Face Photo)</div>
+            <div class="face-badge-sub">Biometrik yuz qirqib olindi</div>
+            <button type="button" class="btn-kyc-match" onclick="openKYCModal()">
+              🤳 Selfie Match (KYC)
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Tabs -->
@@ -214,6 +234,54 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.1.2"></script>
+  <!-- KYC 1:1 Face Match Modal -->
+  <div class="modal-overlay" id="kycModal" style="display:none" onclick="closeKYCModal()">
+    <div class="modal-box kyc-modal-box" onclick="event.stopPropagation()">
+      <div class="modal-title">🤳 KYC Biometrik Shaxs Tasdiqlash (1:1 Face Match)</div>
+      <p class="modal-desc">ID karta yoki pasportdagi surat bilan foydalanuvchining jonli selfisini solishtirish.</p>
+      
+      <div class="kyc-comparison-grid">
+        <!-- Document Face Box -->
+        <div class="kyc-photo-box">
+          <div class="kyc-photo-header">🪪 Hujjatdagi Surat</div>
+          <div class="kyc-img-container">
+            <img id="kycDocImg" src="" alt="Hujjat surati" class="kyc-img">
+          </div>
+          <div class="kyc-photo-status text-ok" id="kycDocStatus">✓ Hujjatdan qirqib olindi</div>
+        </div>
+
+        <!-- Selfie Face Box -->
+        <div class="kyc-photo-box">
+          <div class="kyc-photo-header">🤳 Jonli Selfie Fotosurati</div>
+          <div class="kyc-img-container kyc-selfie-drop" onclick="document.getElementById('selfieInput').click()">
+            <img id="kycSelfieImg" src="" alt="Selfie" class="kyc-img" style="display:none">
+            <div id="selfieUploadPrompt" class="selfie-prompt">
+              <span style="font-size:32px;display:block;margin-bottom:6px;">📸</span>
+              <strong style="color:var(--text);font-size:13px;">Selfie rasm tanlang</strong>
+              <small style="color:var(--text3);font-size:11px;display:block;margin-top:2px;">yoki bu yerga tashlang</small>
+            </div>
+            <input type="file" id="selfieInput" accept="image/*" style="display:none" onchange="handleSelfieFile(event)">
+          </div>
+          <div class="kyc-photo-status text-muted" id="kycSelfieStatus">Kutilmoqda...</div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="kyc-actions">
+        <button class="btn-primary" id="btnRunKYC" onclick="runKYCFaceMatch()" disabled>
+          ⚡ Solishtirish (Face Match)
+        </button>
+        <button class="btn-secondary" onclick="closeKYCModal()">Yopish</button>
+      </div>
+
+      <!-- KYC Result Box -->
+      <div class="kyc-result-box" id="kycResultBox" style="display:none">
+        <div class="kyc-result-banner" id="kycBanner"></div>
+        <div class="kyc-result-details" id="kycDetails"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=1.2.0"></script>
 </body>
 </html>

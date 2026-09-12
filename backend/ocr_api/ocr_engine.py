@@ -925,6 +925,7 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         'structured_fields': {},
         'mrz': None,
         'validation': None,
+        'face': None,
         'confidence': 0.0,
         'processing_time_ms': 0.0,
         'debug': {},
@@ -1058,6 +1059,25 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                 'is_authentic': True,
                 'overall_status': 'NOT_APPLICABLE',
                 'error': str(val_err)
+            }
+
+        # 10. Extract portrait face photo (KYC Face Extraction)
+        try:
+            from ocr_api.face_engine import detect_and_crop_face
+            face_res = detect_and_crop_face(rotated_img)
+            result['face'] = {
+                'detected': face_res['detected'],
+                'box': face_res['box'],
+                'image_base64': face_res['image_base64'],
+                'confidence': face_res['confidence']
+            }
+        except Exception as face_err:
+            logger.warning(f"[OCR] Face extraction exception: {face_err}")
+            result['face'] = {
+                'detected': False,
+                'box': None,
+                'image_base64': None,
+                'confidence': 0.0
             }
             
         result['structured_fields'] = structured

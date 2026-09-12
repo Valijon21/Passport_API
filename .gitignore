@@ -84,8 +84,8 @@ backend/deep_diagnostic.py
 backend/test_batch_ocr.py
 backend/test_sample.jpg
 
-# Sensitive Test Images (Personal Data Protection)
-# Keep the folder structure via .gitkeep and README, but ignore real citizen ID documents
+# Sensitive Personal Data & Diagnostic Reports
+AUDIT_OCR_REPORT.md
 pasport_img/*
 !pasport_img/.gitkeep
 !pasport_img/README.md

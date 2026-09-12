@@ -203,24 +203,24 @@ console.log(result.structured_fields);
   "doc_type": "auto",
   "detected_side": "id_front",
   "structured_fields": {
-    "document_number": "AD8087235",
+    "document_number": "FA1234567",
     "jshshir": null,
-    "surname": "MURODOV",
-    "first_name": "DADAXON",
-    "patronymic": "XUSANXONOVICH",
-    "birth_date": "1983-10-21",
-    "expiry_date": "2034-08-01",
-    "issue_date": "2024-08-02",
+    "surname": "ALIYEV",
+    "first_name": "VALIJON",
+    "patronymic": "ANVAROVICH",
+    "birth_date": "1995-05-15",
+    "expiry_date": "2035-05-14",
+    "issue_date": "2025-05-15",
     "gender": "Erkak",
     "nationality": "O'zbekiston",
     "birth_place": null,
     "issuing_authority": null
   },
   "mrz": null,
-  "confidence": 92.5,
+  "confidence": 94.8,
   "processing_time_ms": 1840.4,
   "debug": {
-    "original_dimensions": "1981x1227",
+    "original_dimensions": "1920x1080",
     "deskew_angle": 0.0
   },
   "error": null

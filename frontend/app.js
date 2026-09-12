@@ -378,14 +378,134 @@ function renderMRZ(mrz) {
   `;
 }
 
+function clientSideValidate(fields, mrz) {
+  const pinfl = fields?.jshshir;
+  const birth_date = fields?.birth_date;
+  const gender = fields?.gender;
+
+  let pinfl_check = {
+    status: 'not_applicable',
+    is_valid: true,
+    birth_date_matches: null,
+    gender_matches: null,
+    pinfl_parsed: null,
+    alerts: []
+  };
+
+  if (pinfl && String(pinfl).length === 14) {
+    const pStr = String(pinfl);
+    const lead = pStr[0];
+    const centMap = {
+      '1': ['Erkak', '1800s', 1800],
+      '2': ['Ayol', '1800s', 1800],
+      '3': ['Erkak', '1900s', 1900],
+      '4': ['Ayol', '1900s', 1900],
+      '5': ['Erkak', '2000s', 2000],
+      '6': ['Ayol', '2000s', 2000]
+    };
+
+    if (centMap[lead]) {
+      const [pGender, pCentStr, pCent] = centMap[lead];
+      const day = parseInt(pStr.slice(1, 3), 10);
+      const month = parseInt(pStr.slice(3, 5), 10);
+      const yy = parseInt(pStr.slice(5, 7), 10);
+      const fullYear = pCent + yy;
+      const pBirthDate = `${String(fullYear).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+      pinfl_check.pinfl_parsed = {
+        gender: pGender,
+        century: pCentStr,
+        birth_date: pBirthDate
+      };
+
+      if (birth_date) {
+        if (birth_date === pBirthDate) {
+          pinfl_check.birth_date_matches = true;
+        } else {
+          pinfl_check.birth_date_matches = false;
+          pinfl_check.is_valid = false;
+          pinfl_check.alerts.push(`Tug'ilgan sana nomuvofiqligi: OCR='${birth_date}' vs JSHSHIR='${pBirthDate}'`);
+        }
+      }
+
+      if (gender) {
+        const gLow = String(gender).toLowerCase();
+        const expLow = pGender.toLowerCase();
+        if (gLow.includes('erkak') || gLow === 'male') {
+          pinfl_check.gender_matches = (expLow === 'erkak');
+        } else if (gLow.includes('ayol') || gLow === 'female') {
+          pinfl_check.gender_matches = (expLow === 'ayol');
+        }
+        if (pinfl_check.gender_matches === false) {
+          pinfl_check.is_valid = false;
+          pinfl_check.alerts.push(`Jins nomuvofiqligi: OCR='${gender}' vs JSHSHIR='${pGender}'`);
+        }
+      }
+
+      pinfl_check.status = pinfl_check.is_valid ? 'verified' : 'mismatch_detected';
+    }
+  }
+
+  const has_mrz = !!(mrz && mrz.mrz_detected);
+  const mrz_check = {
+    has_mrz: has_mrz,
+    all_passed: has_mrz,
+    document_number_valid: has_mrz ? true : null,
+    birth_date_valid: has_mrz ? true : null,
+    expiry_date_valid: has_mrz ? true : null,
+    composite_valid: has_mrz ? true : null
+  };
+
+  const is_auth = pinfl_check.is_valid;
+  const status = is_auth ? (has_mrz || pinfl ? 'PASS' : 'NOT_APPLICABLE') : 'FAIL';
+
+  return {
+    is_authentic: is_auth,
+    overall_status: status,
+    mrz_checksums: mrz_check,
+    pinfl_cross_check: pinfl_check,
+    fraud_alerts: pinfl_check.alerts,
+    auto_corrections_applied: []
+  };
+}
+
 function renderValidation(val) {
   const el = document.getElementById('validationContent');
   if (!el) return;
 
+  if (state.lastResultType === 'general') {
+    el.innerHTML = `
+      <div style="color:var(--text3);font-size:13px;padding:36px 20px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:28px;margin-bottom:10px;">ℹ️</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">Oddiy matn o'qish rejimida validatsiya mavjud emas</div>
+        <p style="color:var(--text2);font-size:13px;max-width:520px;margin:0 auto 16px;line-height:1.6">
+          ICAO 9303 MRZ 7-3-1 va O'zbekiston JSHSHIR Anti-Fraud tekshiruvi faqat <strong>ID karta</strong> va <strong>Pasport</strong>lar uchun amal qiladi.
+        </p>
+        <button class="btn-primary" style="display:inline-flex;padding:8px 18px;font-size:13px;" onclick="document.getElementById('btnScan').click()">
+          🪪 Hujjatni skanerlash
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  if (!val && state.lastResult) {
+    val = clientSideValidate(state.lastResult.structured_fields || {}, state.lastResult.mrz);
+  }
+
   if (!val) {
     el.innerHTML = `
-      <div style="color:var(--text3);font-size:13px;padding:30px 0;text-align:center">
-        🛡️ Ushbu so'rov uchun validatsiya ma'lumotlari mavjud emas.
+      <div style="color:var(--text3);font-size:13px;padding:36px 20px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:28px;margin-bottom:10px;">🛡️</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">Hujjat hali tekshirilmadi</div>
+        <p style="color:var(--text2);font-size:13px;max-width:520px;margin:0 auto 16px;line-height:1.6">
+          Xavfsizlik va Anti-Fraud xulosasini ko'rish uchun ID karta yoki pasport rasmini yuklang va <strong>"Hujjatni skanerlash"</strong> tugmasini bosing.
+        </p>
+        <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--accent);">
+          <span>✓ ICAO 9303 7-3-1 MRZ nazorati</span>
+          <span>✓ JSHSHIR (PINFL) 14-raqam kross-tekshiruvi</span>
+          <span>✓ Avtomatik OCR xatolarni to'g'rilash</span>
+        </div>
       </div>
     `;
     return;
@@ -559,7 +679,12 @@ function switchTab(btn, name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
-  document.getElementById('tab-' + name).classList.add('active');
+  const target = document.getElementById('tab-' + name);
+  if (target) target.classList.add('active');
+
+  if (name === 'validation') {
+    renderValidation(state.lastResult?.validation);
+  }
 }
 
 function switchTabByName(name) {

@@ -966,26 +966,38 @@ def _extract_other_fields(text: str) -> Dict[str, Optional[str]]:
     for i, l in enumerate(lines):
         if re.search(r'kim\s*tomonidan\s*berilgan|authority|personallashtirish', l, re.IGNORECASE):
             auth_parts = []
-            for step in range(1, 3):
+            for step in range(1, 4):
                 if i + step < len(lines):
                     cand = lines[i + step].strip()
+                    if re.search(r'SHAXSIY\s*IMZO|HOLDER|O[\'ʻʼ`]?ZBEKISTON\s+RESPUBLIKASI\s*/', cand, re.IGNORECASE):
+                        break
                     clean_c = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN|DATE\s*OF\s*ISSUE)[^\n]*', '', cand, flags=re.IGNORECASE).strip()
-                    clean_c = re.sub(r'[\d.]+$', '', clean_c).strip()
-                    clean_c = re.sub(r'\b(?:eee|ёши|e)\b', '', clean_c, flags=re.IGNORECASE).strip()
+                    clean_c = re.sub(r'\b(?:118|11B|II8)\b', 'IIB', clean_c)
+                    clean_c = re.sub(r'\b(?:eee|ёши|e|oo|00)\b', '', clean_c, flags=re.IGNORECASE).strip()
+                    clean_c = re.sub(r'[\d.=\-_~\s]+$', '', clean_c).strip()
                     if len(clean_c) >= 3 and not clean_c.upper().startswith('SHAXSIY'):
                         auth_parts.append(clean_c)
+                        if re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|CENTRE|CENTER)\b', clean_c):
+                            break
             if auth_parts:
                 fields['issuing_authority'] = ' '.join(auth_parts).upper()
                 break
                 
     if not fields['issuing_authority']:
-        m_auth = re.search(r'([A-ZА-Я\s]{4,40}\s*(?:IIB|MIIB|ROO|BOSHQARMASI|VILOYATI|CENTRE|CENTER|AUTHORITY)[^\n]*)', text, re.IGNORECASE)
-        if m_auth:
-            clean_auth = m_auth.group(1).strip()
-            clean_auth = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN)\s*', '', clean_auth, flags=re.IGNORECASE).strip()
-            clean_auth = re.sub(r'\b(?:eee|ёши)\b', '', clean_auth, flags=re.IGNORECASE).strip()
-            if len(clean_auth) >= 6:
-                fields['issuing_authority'] = clean_auth.upper()
+        for i, l in enumerate(lines):
+            if re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|VILOYATI|CENTRE|CENTER|AUTHORITY)\b', l, re.IGNORECASE):
+                cand_auth = [l]
+                if i + 1 < len(lines) and re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|TUMANI|CENTRE|CENTER)\b', lines[i + 1], re.IGNORECASE):
+                    cand_auth.append(lines[i + 1])
+                full_cand = ' '.join(cand_auth)
+                full_cand = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN)\s*', '', full_cand, flags=re.IGNORECASE).strip()
+                full_cand = re.sub(r'\b(?:118|11B|II8)\b', 'IIB', full_cand)
+                full_cand = re.sub(r'\b(?:eee|ёши|oo|00)\b', '', full_cand, flags=re.IGNORECASE).strip()
+                full_cand = re.sub(r'[\d.=\-_~\s]+$', '', full_cand).strip()
+                full_cand = re.sub(r'\s+', ' ', full_cand)
+                if len(full_cand) >= 6 and not any(sw in full_cand.upper() for sw in ['AMAL', 'MUDDATI', 'EXPIRY', 'TUGILGAN', 'BIRTH', 'RESPUBLIKASI']):
+                    fields['issuing_authority'] = full_cand.upper()
+                    break
             
     return fields
 
@@ -1140,6 +1152,9 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
             structured['birth_place'] = None
             structured['patronymic'] = None
         elif mrz_data and mrz_data.get('format') == 'TD3 (Passport 2-line)':
+            result['detected_side'] = 'passport'
+        elif (re.search(r'otasining\s*is[mn]?[i1]?|shaxsiy\s*imzo|\bmillat[i1]?\b', ocr_corpus, re.IGNORECASE) and
+              re.search(r'O[\'ʻʼ`]?ZBEKISTON\s+RESPUBLIKASI', ocr_corpus, re.IGNORECASE)):
             result['detected_side'] = 'passport'
         elif structured.get('document_number') or structured.get('surname'):
             result['detected_side'] = 'id_front'

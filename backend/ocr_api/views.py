@@ -22,8 +22,10 @@ from .serializers import (
     OCRResponseSerializer,
     FaceMatchRequestSerializer,
     FaceMatchResponseSerializer,
+    IDCardFullRequestSerializer,
+    IDCardFullResponseSerializer,
 )
-from .ocr_engine import extract_id_card, extract_general_text
+from .ocr_engine import extract_id_card, extract_general_text, extract_id_card_full
 from .face_engine import verify_kyc_selfie
 import time
 
@@ -98,6 +100,96 @@ class IDCardOCRView(APIView):
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"[IDCardOCR] Server xatosi: {e}\n{tb}")
+            return Response(
+                {
+                    'error': f'Server xatosi: {str(e)}',
+                    'traceback': tb if self._is_debug(request) else None,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _get_client_ip(self, request):
+        x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded:
+            return x_forwarded.split(',')[0]
+        return request.META.get('REMOTE_ADDR', 'unknown')
+
+    def _is_debug(self, request):
+        from django.conf import settings
+        return settings.DEBUG
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+class IDCardFullOCRView(APIView):
+    """
+    POST /api/v1/ocr/id-full/
+
+    ID karta old va orqa tomonlarini birgalikda tahlil qilish (Smart Two-Sided Merge).
+    Old tomondan: Ism, Familiya, Sharif, Hujjat raqami, Yuz surati (Face Crop);
+    Orqa tomondan: 14 xonali JSHSHIR, Tug'ilgan joyi, Amal qilish muddati va 3 qatorli TD1 MRZ.
+    Anti-Fraud kross-tekshiruv va avtomatik teskari tomonlarni tuzatish (Auto-Swap).
+    """
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        tags=['Hujjat OCR & Tahlil'],
+        summary="ID Karta Old va Orqa tomonini birlashtirish (Two-Sided Smart Merge)",
+        description=(
+            "Foydalanuvchi bir vaqtning o'zida O'zbekiston ID kartasining old (`front_image`) va "
+            "orqa (`back_image`) tomonlarini yuklaydi. "
+            "Tizim ikkala tomonni parallel tahlil qiladi, agar foydalanuvchi ularni adashtirib "
+            "teskari yuklagan bo'lsa, avtomatik ravishda to'g'irlaydi (Auto-Swap), "
+            "hujjat raqamlari, tug'ilgan sanalari, ism-familiyalari va JSHSHIR bo'yicha "
+            "kross-tekshiruv (Anti-Fraud) o'tkazadi va 100% to'liq fuqaro profilini taqdim etadi."
+        ),
+        request=IDCardFullRequestSerializer,
+        responses={
+            200: IDCardFullResponseSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}, 'details': {'type': 'object'}}},
+            422: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            500: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        client_ip = self._get_client_ip(request)
+        logger.info(f"[IDCardFullOCR] So'rov: IP={client_ip}")
+
+        serializer = IDCardFullRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            logger.warning(f"[IDCardFullOCR] Validatsiya xatosi: {serializer.errors}")
+            return Response(
+                {'error': "Noto'g'ri so'rov", 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        front_file = serializer.validated_data['front_image']
+        back_file = serializer.validated_data['back_image']
+
+        logger.info(
+            f"[IDCardFullOCR] Fayllar: Front='{front_file.name}' ({front_file.size}b), "
+            f"Back='{back_file.name}' ({back_file.size}b)"
+        )
+
+        try:
+            front_bytes = front_file.read()
+            back_bytes = back_file.read()
+
+            result = extract_id_card_full(front_bytes, back_bytes)
+
+            http_status = status.HTTP_200_OK if result.get('success') else status.HTTP_422_UNPROCESSABLE_ENTITY
+
+            logger.info(
+                f"[IDCardFullOCR] Natija: success={result.get('success')}, "
+                f"status={result.get('validation', {}).get('overall_status')}, "
+                f"swapped={result.get('auto_swapped')}, "
+                f"time={result.get('processing_time_ms')}ms"
+            )
+
+            return Response(result, status=http_status)
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            logger.error(f"[IDCardFullOCR] Server xatosi: {e}\n{tb}")
             return Response(
                 {
                     'error': f'Server xatosi: {str(e)}',

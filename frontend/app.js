@@ -13,6 +13,7 @@ const CONFIG = {
   API_BASE: 'http://127.0.0.1:8000/api/v1',  // ← Django server
   ENDPOINTS: {
     ID_CARD:    '/ocr/id/',
+    ID_FULL:    '/ocr/id-full/',
     GENERAL:    '/ocr/general/',
     FACE_MATCH: '/kyc/face-match/',
     HEALTH:     '/health/',
@@ -25,9 +26,12 @@ const CONFIG = {
 // ══════════════════════════════════════════════════════════════
 const state = {
   file: null,
+  frontFile: null,
+  backFile: null,
+  appMode: 'single',     // 'single' | 'double'
   selfieFile: null,
   lastResult: null,
-  lastResultType: null,  // 'id' | 'general'
+  lastResultType: null,  // 'id' | 'general' | 'id_full'
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -146,6 +150,128 @@ function clearAll() {
   log('Tozalandi', LEVELS.INFO);
 }
 
+// ── Two-Sided Mode Handlers ──────────────────────────────────
+function switchAppMode(mode) {
+  state.appMode = mode;
+  const btnSingle = document.getElementById('btnModeSingle');
+  const btnDouble = document.getElementById('btnModeDouble');
+  const secSingle = document.getElementById('sectionSingleMode');
+  const secDouble = document.getElementById('sectionDoubleMode');
+
+  if (mode === 'double') {
+    btnSingle.classList.remove('active');
+    btnDouble.classList.add('active');
+    secSingle.style.display = 'none';
+    secDouble.style.display = 'block';
+    log("Rejim tanlandi: 🪪 Two-Sided Smart Merge (ID Karta Ikkala Tomoni)", LEVELS.INFO);
+  } else {
+    btnDouble.classList.remove('active');
+    btnSingle.classList.add('active');
+    secDouble.style.display = 'none';
+    secSingle.style.display = 'block';
+    log("Rejim tanlandi: 📄 Yagona Hujjat / Pasport", LEVELS.INFO);
+  }
+  hideResults();
+  hideError();
+}
+
+function handleDoubleDragOver(e, side) {
+  e.preventDefault();
+  const zoneId = side === 'front' ? 'uploadZoneFront' : 'uploadZoneBack';
+  document.getElementById(zoneId)?.classList.add('drag-over');
+}
+
+function handleDoubleDragLeave(e, side) {
+  const zoneId = side === 'front' ? 'uploadZoneFront' : 'uploadZoneBack';
+  document.getElementById(zoneId)?.classList.remove('drag-over');
+}
+
+function handleDoubleDrop(e, side) {
+  e.preventDefault();
+  const zoneId = side === 'front' ? 'uploadZoneFront' : 'uploadZoneBack';
+  document.getElementById(zoneId)?.classList.remove('drag-over');
+  const files = e.dataTransfer.files;
+  if (files.length) processDoubleSideFile(files[0], side);
+}
+
+function handleDoubleFile(e, side) {
+  if (e.target.files.length) processDoubleSideFile(e.target.files[0], side);
+}
+
+function processDoubleSideFile(file, side) {
+  const allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/webp', 'image/tiff'];
+  if (!allowed.includes(file.type)) {
+    showError("Noto'g'ri format", `Faqat: ${allowed.join(', ')}`);
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    showError("Hajm katta", `Rasm hajmi ${formatBytes(file.size)}, limit: 10 MB`);
+    return;
+  }
+
+  const isFront = side === 'front';
+  if (isFront) state.frontFile = file;
+  else state.backFile = file;
+
+  hideError();
+  hideResults();
+
+  const emptyEl = document.getElementById(isFront ? 'sideEmptyFront' : 'sideEmptyBack');
+  const previewWrap = document.getElementById(isFront ? 'sidePreviewFront' : 'sidePreviewBack');
+  const imgEl = document.getElementById(isFront ? 'sideImgFront' : 'sideImgBack');
+  const infoEl = document.getElementById(isFront ? 'sideInfoFront' : 'sideInfoBack');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    imgEl.src = e.target.result;
+    imgEl.onload = () => {
+      infoEl.innerHTML = `
+        <strong>${file.name}</strong>
+        <span>${formatBytes(file.size)} • ${imgEl.naturalWidth}×${imgEl.naturalHeight}px</span>
+        <span>${file.type.replace('image/', '').toUpperCase()}</span>
+      `;
+      emptyEl.style.display = 'none';
+      previewWrap.style.display = 'flex';
+    };
+  };
+  reader.readAsDataURL(file);
+
+  log(`[DoubleMode] ${isFront ? 'Old' : 'Orqa'} tomon yuklandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.OK);
+  updateDoubleMergeBtnState();
+}
+
+function clearSide(e, side) {
+  if (e) e.stopPropagation();
+  const isFront = side === 'front';
+  if (isFront) {
+    state.frontFile = null;
+    document.getElementById('fileInputFront').value = '';
+    document.getElementById('sideEmptyFront').style.display = 'flex';
+    document.getElementById('sidePreviewFront').style.display = 'none';
+  } else {
+    state.backFile = null;
+    document.getElementById('fileInputBack').value = '';
+    document.getElementById('sideEmptyBack').style.display = 'flex';
+    document.getElementById('sidePreviewBack').style.display = 'none';
+  }
+  updateDoubleMergeBtnState();
+}
+
+function clearDoubleAll() {
+  clearSide(null, 'front');
+  clearSide(null, 'back');
+  hideResults();
+  hideError();
+  log("Ikkala tomon rasmlari tozalandi", LEVELS.INFO);
+}
+
+function updateDoubleMergeBtnState() {
+  const btn = document.getElementById('btnMerge');
+  if (!btn) return;
+  const ready = !!(state.frontFile && state.backFile);
+  btn.disabled = !ready;
+}
+
 // ══════════════════════════════════════════════════════════════
 //  API CALLS
 // ══════════════════════════════════════════════════════════════
@@ -239,6 +365,41 @@ async function runGeneralOCR() {
   }
 }
 
+// ── Two-Sided Smart Merge OCR ─────────────────────────────────
+async function runIDCardFullOCR() {
+  if (!state.frontFile || !state.backFile) {
+    showError("Fayllar to'liq emas", "Iltimos, ID kartaning old va orqa tomonlarini yuklang.");
+    return;
+  }
+
+  log("Two-Sided Smart Merge boshlandi (ikkala tomon tahlil qilinmoqda)...", LEVELS.INFO);
+  setLoading(true, 'btnMerge', 'Ikkala tomon tahlil qilinmoqda va birlashtirilmoqda...');
+  hideError();
+  hideResults();
+
+  try {
+    const fd = new FormData();
+    fd.append('front_image', state.frontFile);
+    fd.append('back_image', state.backFile);
+
+    const t0 = performance.now();
+    const data = await apiRequest(CONFIG.ENDPOINTS.ID_FULL, fd);
+    const elapsed = Math.round(performance.now() - t0);
+
+    log(`Smart Merge muvaffaqiyatli: status=${data.validation?.overall_status}, swapped=${data.auto_swapped}, server=${data.processing_time_ms}ms, client=${elapsed}ms`, LEVELS.OK);
+
+    state.lastResult = data;
+    state.lastResultType = 'id_full';
+    renderIDFullResult(data);
+
+  } catch (err) {
+    handleAPIError(err, 'Two-Sided Smart Merge xatosi');
+  } finally {
+    setLoading(false, 'btnMerge', '🪪 Ikkala Tomonni Birlashtirish (Two-Sided Smart Merge)');
+    updateDoubleMergeBtnState();
+  }
+}
+
 function handleAPIError(err, context) {
   log(`${context}: ${err.message}`, LEVELS.ERROR);
 
@@ -260,6 +421,9 @@ function handleAPIError(err, context) {
 //  RENDERING
 // ══════════════════════════════════════════════════════════════
 function renderIDResult(data) {
+  const swapBanner = document.getElementById('autoSwapBanner');
+  if (swapBanner) swapBanner.style.display = 'none';
+
   renderConfidence(data.confidence, data.processing_time_ms);
   renderFaceCrop(data.face);
   renderStructuredFields(data.structured_fields || {});
@@ -271,6 +435,35 @@ function renderIDResult(data) {
 
   if (!data.success) {
     log(`OCR muvaffaqiyatsiz: ${data.error}`, LEVELS.WARN);
+  }
+}
+
+function renderIDFullResult(data) {
+  renderConfidence(data.confidence, data.processing_time_ms);
+  renderFaceCrop(data.face);
+
+  const swapBanner = document.getElementById('autoSwapBanner');
+  if (swapBanner) {
+    swapBanner.style.display = data.auto_swapped ? 'flex' : 'none';
+  }
+
+  // Render unified citizen profile
+  renderStructuredFields(data.citizen_profile || {});
+
+  // Raw text combining both sides
+  const frontRaw = data.front_side?.raw_text || '';
+  const backRaw = data.back_side?.raw_text || '';
+  const combinedRaw = `=== 🪪 OLD TOMON (FRONT SIDE) ===\n${frontRaw}\n\n=== 🔢 ORQA TOMON (BACK SIDE) ===\n${backRaw}`;
+  renderRawText(combinedRaw);
+
+  renderMRZ(data.mrz || data.back_side?.mrz || data.front_side?.mrz);
+  renderValidation(data.validation);
+  renderDebug(data);
+  showResults();
+  switchTabByName('structured');
+
+  if (!data.success) {
+    log(`Birlashtirishda kamchilik: ${data.error}`, LEVELS.WARN);
   }
 }
 
@@ -330,30 +523,44 @@ function renderFaceCrop(face) {
 }
 
 const FIELD_LABELS = {
-  document_number:  { label: 'Hujjat raqami', icon: '🪪' },
-  jshshir:          { label: 'JSHSHIR / INN', icon: '🔢' },
-  surname:          { label: 'Familiya',       icon: '👤' },
-  first_name:       { label: 'Ism',            icon: '👤' },
-  patronymic:       { label: 'Otasining ismi', icon: '👤' },
-  birth_date:       { label: 'Tug\'ilgan sana', icon: '📅' },
-  issue_date:       { label: 'Berilgan sana',  icon: '📅' },
-  expiry_date:      { label: 'Amal qilish muddati', icon: '📅' },
-  gender:           { label: 'Jinsi',          icon: '⚧' },
-  nationality:      { label: 'Millati',        icon: '🌍' },
-  birth_place:      { label: 'Tug\'ilgan joyi', icon: '📍' },
-  issuing_authority:{ label: 'Bergan organ',   icon: '🏛' },
+  full_name:        { label: 'To\'liq ismi',           icon: '🪪' },
+  surname:          { label: 'Familiya',               icon: '👤' },
+  first_name:       { label: 'Ism',                    icon: '👤' },
+  patronymic:       { label: 'Otasining ismi',         icon: '👤' },
+  personal_number:  { label: 'JSHSHIR (PINFL)',        icon: '🔢' },
+  jshshir:          { label: 'JSHSHIR / INN',          icon: '🔢' },
+  document_number:  { label: 'Hujjat raqami',          icon: '🪪' },
+  date_of_birth:    { label: 'Tug\'ilgan sana',        icon: '📅' },
+  birth_date:       { label: 'Tug\'ilgan sana',        icon: '📅' },
+  place_of_birth:   { label: 'Tug\'ilgan joyi',        icon: '📍' },
+  birth_place:      { label: 'Tug\'ilgan joyi',        icon: '📍' },
+  date_of_issue:    { label: 'Berilgan sana',          icon: '📅' },
+  issue_date:       { label: 'Berilgan sana',          icon: '📅' },
+  date_of_expiry:   { label: 'Amal qilish muddati',    icon: '📅' },
+  expiry_date:      { label: 'Amal qilish muddati',    icon: '📅' },
+  gender:           { label: 'Jinsi',                  icon: '⚧' },
+  nationality:      { label: 'Fuqaroligi / Millati',   icon: '🌍' },
+  issuing_authority:{ label: 'Kim tomonidan berilgan', icon: '🏛' },
 };
 
 function renderStructuredFields(fields) {
   const grid = document.getElementById('fieldsGrid');
   grid.innerHTML = '';
 
+  const normalized = { ...fields };
+  if (normalized.personal_number && normalized.jshshir) delete normalized.jshshir;
+  if (normalized.date_of_birth && normalized.birth_date) delete normalized.birth_date;
+  if (normalized.place_of_birth && normalized.birth_place) delete normalized.birth_place;
+  if (normalized.date_of_issue && normalized.issue_date) delete normalized.issue_date;
+  if (normalized.date_of_expiry && normalized.expiry_date) delete normalized.expiry_date;
+
   const keys = Object.keys(FIELD_LABELS);
   let foundCount = 0;
 
   for (const key of keys) {
+    if (!(key in normalized)) continue;
     const meta = FIELD_LABELS[key];
-    const val = fields[key];
+    const val = normalized[key];
     const hasVal = val && val !== 'null' && val !== null;
     if (hasVal) foundCount++;
 
@@ -369,7 +576,7 @@ function renderStructuredFields(fields) {
     grid.appendChild(card);
   }
 
-  log(`Tuzilgan maydonlar: ${foundCount}/${keys.length} topildi`, foundCount > 0 ? LEVELS.OK : LEVELS.WARN);
+  log(`Tuzilgan maydonlar: ${foundCount} ta ma'lumot ko'rsatildi`, foundCount > 0 ? LEVELS.OK : LEVELS.WARN);
 }
 
 function renderRawText(text) {
@@ -495,6 +702,11 @@ function clientSideValidate(fields, mrz) {
 function renderValidation(val) {
   const el = document.getElementById('validationContent');
   if (!el) return;
+
+  if (state.lastResultType === 'id_full') {
+    renderIDFullValidation(val, el);
+    return;
+  }
 
   if (state.lastResultType === 'general') {
     el.innerHTML = `
@@ -637,6 +849,148 @@ function renderValidation(val) {
             ` : ''}
           </div>
         </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderIDFullValidation(val, el) {
+  if (!val) {
+    el.innerHTML = `
+      <div style="color:var(--text3);font-size:13px;padding:36px 20px;text-align:center;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:28px;margin-bottom:10px;">🛡️</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">Two-Sided ID karta hali tekshirilmadi</div>
+      </div>
+    `;
+    return;
+  }
+
+  const isVerified = val.overall_status === 'VERIFIED_MATCH';
+  const isFraud = val.overall_status === 'SUSPECTED_FRAUD';
+  const statusClass = isVerified ? 'val-pass' : (isFraud ? 'val-fail' : 'val-warn');
+
+  const statusBadge = isVerified
+    ? '<span class="status-tag tag-pass">✅ 100% MOS KELDI (VERIFIED)</span>'
+    : (isFraud
+      ? '<span class="status-tag tag-fail">🚨 SHUBHALI / FRAUD ALERT</span>'
+      : '<span class="status-tag tag-warn">⚠️ QISMAN TASDIQLANDI</span>');
+
+  const authBadge = val.is_authentic
+    ? '<span class="status-tag tag-pass">🛡️ Haqiqiy Fuqaro ID</span>'
+    : '<span class="status-tag tag-fail">⚠️ Soxtalik Xavfi</span>';
+
+  const scoreBadge = `<span class="status-tag tag-pass" style="background:rgba(0,149,255,0.15);color:var(--accent2);border-color:rgba(0,149,255,0.3);">⚡ Moslik: ${val.match_score ?? 100}%</span>`;
+
+  // Alerts
+  let alertsHtml = '';
+  if (val.fraud_alerts && val.fraud_alerts.length > 0) {
+    alertsHtml = `
+      <div class="val-alert-box">
+        <div class="val-alert-title">🚨 Aniqlangan Ogohlantirishlar (Fraud Alerts):</div>
+        <ul>
+          ${val.fraud_alerts.map(a => `<li>${escapeHtml(a)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  // Warnings
+  let warningsHtml = '';
+  if (val.warnings && val.warnings.length > 0) {
+    warningsHtml = `
+      <div class="val-corr-box" style="border-color:rgba(255,159,67,0.3);background:rgba(255,159,67,0.06);">
+        <span style="color:var(--warn);">⚠️ <strong>Tizim xabari:</strong></span>
+        <ul>
+          ${val.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  const checks = val.checks || {};
+  const renderTag = (st) => {
+    if (st === 'MATCH') return '<span class="match-tag tag-match">✓ MOS</span>';
+    if (st === 'MISMATCH') return '<span class="match-tag tag-mismatch">✗ NOMUVOFIQ</span>';
+    return '<span class="match-tag tag-skipped">— O\'TKAZILDI</span>';
+  };
+
+  const docCheck = checks.document_number_match || {};
+  const dobCheck = checks.birth_date_match || {};
+  const expCheck = checks.expiry_date_match || {};
+  const nameCheck = checks.name_match || {};
+  const pinflCheck = checks.jshshir_validation || {};
+
+  const pinflTag = pinflCheck.is_valid
+    ? '<span class="match-tag tag-match">✓ 100% TO\'G\'RI</span>'
+    : (pinflCheck.is_valid === false ? '<span class="match-tag tag-mismatch">✗ XATOLIK</span>' : '<span class="match-tag tag-skipped">— TOPILMADI</span>');
+
+  el.innerHTML = `
+    <div class="val-panel ${statusClass}">
+      <div class="val-header">
+        <div class="val-title-wrap">
+          <div class="val-title-icon">🛡️</div>
+          <div>
+            <h3 class="val-title-text">Two-Sided Kross-Tekshiruv va Anti-Fraud Xulosasi</h3>
+            <p class="val-sub-text">Old va orqa tomon ma'lumotlarining o'zaro muvofiqligi va JSHSHIR xronologik tekshiruvi</p>
+          </div>
+        </div>
+        <div class="val-badges-wrap">
+          ${statusBadge}
+          ${authBadge}
+          ${scoreBadge}
+        </div>
+      </div>
+
+      ${alertsHtml}
+      ${warningsHtml}
+
+      <div style="margin-top:16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
+        <table class="cross-check-table">
+          <thead>
+            <tr>
+              <th>Tekshiruv maydoni</th>
+              <th>Old tomondan</th>
+              <th>Orqa tomondan (MRZ)</th>
+              <th>Holat</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>🪪 Hujjat raqami</strong></td>
+              <td><code>${escapeHtml(docCheck.front || '—')}</code></td>
+              <td><code>${escapeHtml(docCheck.back || '—')}</code></td>
+              <td>${renderTag(docCheck.status)}</td>
+            </tr>
+            <tr>
+              <td><strong>📅 Tug'ilgan sana</strong></td>
+              <td><code>${escapeHtml(dobCheck.front || '—')}</code></td>
+              <td><code>${escapeHtml(dobCheck.back || '—')}</code></td>
+              <td>${renderTag(dobCheck.status)}</td>
+            </tr>
+            <tr>
+              <td><strong>📅 Amal qilish muddati</strong></td>
+              <td><code>${escapeHtml(expCheck.front || '—')}</code></td>
+              <td><code>${escapeHtml(expCheck.back || '—')}</code></td>
+              <td>${renderTag(expCheck.status)}</td>
+            </tr>
+            <tr>
+              <td><strong>👤 Ism va familiya</strong></td>
+              <td><code>${escapeHtml(nameCheck.front || '—')}</code></td>
+              <td><code>${escapeHtml(nameCheck.back || '—')}</code></td>
+              <td>${renderTag(nameCheck.status)}</td>
+            </tr>
+            <tr>
+              <td><strong>🔢 14 xonali JSHSHIR (PINFL)</strong></td>
+              <td colspan="2">
+                ${pinflCheck.pinfl_parsed ? `
+                  Jins: <strong>${escapeHtml(pinflCheck.pinfl_parsed.gender)}</strong> | 
+                  Tug'ilgan sana: <strong>${escapeHtml(pinflCheck.pinfl_parsed.birth_date)}</strong>
+                ` : (pinflCheck.alerts ? pinflCheck.alerts.join(', ') : '14 xonali JSHSHIR kross-tekshiruv')}
+              </td>
+              <td>${pinflTag}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   `;
@@ -1290,7 +1644,7 @@ function exportJSON() {
 
 function exportCSV() {
   if (!state.lastResult) return;
-  const fields = state.lastResult.structured_fields || {};
+  const fields = state.lastResult.citizen_profile || state.lastResult.structured_fields || {};
   const rows = [['Maydon', 'Qiymat']];
   for (const [k, v] of Object.entries(fields)) {
     if (k !== 'raw_lines') rows.push([k, v ?? '']);

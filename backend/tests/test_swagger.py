@@ -22,7 +22,9 @@ class TestSwaggerEndpoints(TestCase):
         """GET /api/schema/ should return 200 with OpenAPI yaml/json."""
         resp = self.client.get(reverse('schema'))
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue('openapi' in resp.content.decode('utf-8').lower())
+        content = resp.content.decode('utf-8')
+        self.assertTrue('openapi' in content.lower())
+        self.assertIn('/api/v1/ocr/id-full/', content)
 
     def test_swagger_ui_endpoint(self):
         """GET /api/docs/ should return 200 HTML with Swagger UI."""

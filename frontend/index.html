@@ -27,7 +27,7 @@
         <a href="/api/docs/" target="_blank" class="btn-swagger" title="Interaktiv Swagger API Dokumentatsiyasi">
           📚 API Docs
         </a>
-        <span class="api-badge">API v1.2</span>
+        <span class="api-badge">API v1.4</span>
         <button class="btn-health" id="btnHealth" onclick="checkHealth()">
           <span class="health-dot" id="healthDot"></span>
           Holat
@@ -38,80 +38,181 @@
 
   <!-- ── MAIN ─────────────────────────────────────────── -->
   <main class="main">
-    <!-- Upload Zone -->
-    <section class="upload-section">
-      <div class="section-label">Rasm yuklash</div>
-      <div class="upload-zone" id="uploadZone"
-           ondrop="handleDrop(event)" ondragover="handleDragOver(event)"
-           ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
-        <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(event)">
-        <div class="upload-icon">
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            <path d="M24 32V16M24 16L18 22M24 16L30 22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M8 36a6 6 0 01-2-4.5C6 27.9 8.9 25 12.5 25c.2 0 .4 0 .6.01A10 10 0 0132 22a8.5 8.5 0 016 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    <!-- Mode Switcher -->
+    <div class="mode-switch-wrap">
+      <div class="mode-switch-bar">
+        <button type="button" class="mode-btn active" id="btnModeSingle" onclick="switchAppMode('single')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="16" rx="2"/>
+            <line x1="7" y1="8" x2="17" y2="8"/>
+            <line x1="7" y1="12" x2="13" y2="12"/>
           </svg>
-        </div>
-        <div class="upload-text">
-          <span class="upload-main">Rasmni bu yerga tashlang</span>
-          <span class="upload-sub">yoki bosing • JPEG, PNG, BMP, WEBP • max 10 MB</span>
-        </div>
-        <div class="upload-tips">
-          <span>✓ Qiyshiq rasmlar avtomatik tuzatiladi</span>
-          <span>✓ Hira rasmlar qayta ishlashdan o'tadi</span>
-          <span>✓ MRZ (mashina o'qiydigan zona) parse qilinadi</span>
-        </div>
-      </div>
-
-      <!-- Preview -->
-      <div class="preview-wrap" id="previewWrap" style="display:none">
-        <div class="preview-header">
-          <span>Ko'rinish</span>
-          <button class="btn-clear" onclick="clearAll()">✕ Tozalash</button>
-        </div>
-        <div class="preview-area">
-          <img id="previewImg" alt="preview">
-          <div class="preview-meta" id="previewMeta"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Doc Type + Actions -->
-    <section class="action-section">
-      <div class="doctype-group">
-        <span class="section-label">Hujjat turi</span>
-        <div class="radio-group">
-          <label class="radio-btn">
-            <input type="radio" name="docType" value="auto" checked>
-            <span>Avtomatik</span>
-          </label>
-          <label class="radio-btn">
-            <input type="radio" name="docType" value="id_card">
-            <span>ID Karta</span>
-          </label>
-          <label class="radio-btn">
-            <input type="radio" name="docType" value="passport">
-            <span>Pasport</span>
-          </label>
-        </div>
-      </div>
-
-      <div class="btn-group">
-        <button class="btn-primary" id="btnScan" onclick="runIDCardOCR()" disabled>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="1" y="3" width="16" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
-            <path d="M4 7h3M4 10h2M13 7h1M11 10h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-            <circle cx="10.5" cy="7.5" r="1.5" stroke="currentColor" stroke-width="1.2"/>
-          </svg>
-          Hujjatni skanerlash
+          Yagona Hujjat / Pasport
         </button>
-        <button class="btn-secondary" id="btnGeneral" onclick="runGeneralOCR()" disabled>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M3 5h12M3 9h8M3 13h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <button type="button" class="mode-btn" id="btnModeDouble" onclick="switchAppMode('double')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="5" width="9" height="14" rx="1.5"/>
+            <rect x="13" y="5" width="9" height="14" rx="1.5"/>
           </svg>
-          Oddiy matn o'qish
+          🪪 ID Karta Ikkala Tomoni (Two-Sided Merge)
+          <span class="pill-new">YANGI</span>
         </button>
       </div>
-    </section>
+    </div>
+
+    <!-- SINGLE MODE UPLOAD -->
+    <div id="sectionSingleMode">
+      <!-- Upload Zone -->
+      <section class="upload-section">
+        <div class="section-label">Rasm yuklash</div>
+        <div class="upload-zone" id="uploadZone"
+             ondrop="handleDrop(event)" ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
+          <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(event)">
+          <div class="upload-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+              <path d="M24 32V16M24 16L18 22M24 16L30 22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M8 36a6 6 0 01-2-4.5C6 27.9 8.9 25 12.5 25c.2 0 .4 0 .6.01A10 10 0 0132 22a8.5 8.5 0 016 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="upload-text">
+            <span class="upload-main">Rasmni bu yerga tashlang</span>
+            <span class="upload-sub">yoki bosing • JPEG, PNG, BMP, WEBP • max 10 MB</span>
+          </div>
+          <div class="upload-tips">
+            <span>✓ Qiyshiq rasmlar avtomatik tuzatiladi</span>
+            <span>✓ Hira rasmlar qayta ishlashdan o'tadi</span>
+            <span>✓ MRZ (mashina o'qiydigan zona) parse qilinadi</span>
+          </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="preview-wrap" id="previewWrap" style="display:none">
+          <div class="preview-header">
+            <span>Ko'rinish</span>
+            <button class="btn-clear" onclick="clearAll()">✕ Tozalash</button>
+          </div>
+          <div class="preview-area">
+            <img id="previewImg" alt="preview">
+            <div class="preview-meta" id="previewMeta"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Doc Type + Actions -->
+      <section class="action-section">
+        <div class="doctype-group">
+          <span class="section-label">Hujjat turi</span>
+          <div class="radio-group">
+            <label class="radio-btn">
+              <input type="radio" name="docType" value="auto" checked>
+              <span>Avtomatik</span>
+            </label>
+            <label class="radio-btn">
+              <input type="radio" name="docType" value="id_card">
+              <span>ID Karta</span>
+            </label>
+            <label class="radio-btn">
+              <input type="radio" name="docType" value="passport">
+              <span>Pasport</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn-primary" id="btnScan" onclick="runIDCardOCR()" disabled>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <rect x="1" y="3" width="16" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M4 7h3M4 10h2M13 7h1M11 10h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <circle cx="10.5" cy="7.5" r="1.5" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
+            Hujjatni skanerlash
+          </button>
+          <button class="btn-secondary" id="btnGeneral" onclick="runGeneralOCR()" disabled>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M3 5h12M3 9h8M3 13h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            Oddiy matn o'qish
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <!-- DOUBLE MODE UPLOAD (Two-Sided Smart Merge) -->
+    <div id="sectionDoubleMode" style="display:none">
+      <section class="double-section">
+        <div class="double-notice-banner">
+          <div class="notice-icon">💡</div>
+          <div class="notice-text">
+            <strong>Smart Auto-Swap & Anti-Fraud:</strong> ID kartaning ikkala tomonini yuklang.
+            Agar adashtirib old va orqa rasmlarni teskari yuklasangiz ham, tizim ularni avtomatik to'g'irlaydi
+            va 100% yaxlit fuqaro profilini hosil qiladi.
+          </div>
+        </div>
+
+        <div class="double-grid">
+          <!-- Front Side -->
+          <div class="side-col">
+            <div class="side-header">
+              <span class="side-title">1. Old Tomoni (Front Side)</span>
+              <span class="side-meta-badge">Familiya, Ism, Rasm</span>
+            </div>
+            <div class="upload-zone side-zone" id="uploadZoneFront"
+                 ondrop="handleDoubleDrop(event, 'front')" ondragover="handleDoubleDragOver(event, 'front')"
+                 ondragleave="handleDoubleDragLeave(event, 'front')" onclick="document.getElementById('fileInputFront').click()">
+              <input type="file" id="fileInputFront" accept="image/*" style="display:none" onchange="handleDoubleFile(event, 'front')">
+              <div class="side-empty-state" id="sideEmptyFront">
+                <div class="side-icon">🪪</div>
+                <div class="side-label">Old tomon rasmini tanlang</div>
+                <div class="side-sub">yoki bu yerga tashlang</div>
+              </div>
+              <div class="side-preview" id="sidePreviewFront" style="display:none">
+                <img id="sideImgFront" alt="Front Preview">
+                <div class="side-info" id="sideInfoFront"></div>
+                <button type="button" class="btn-clear-side" onclick="clearSide(event, 'front')">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Back Side -->
+          <div class="side-col">
+            <div class="side-header">
+              <span class="side-title">2. Orqa Tomoni (Back Side)</span>
+              <span class="side-meta-badge">JSHSHIR, MRZ, Sana</span>
+            </div>
+            <div class="upload-zone side-zone" id="uploadZoneBack"
+                 ondrop="handleDoubleDrop(event, 'back')" ondragover="handleDoubleDragOver(event, 'back')"
+                 ondragleave="handleDoubleDragLeave(event, 'back')" onclick="document.getElementById('fileInputBack').click()">
+              <input type="file" id="fileInputBack" accept="image/*" style="display:none" onchange="handleDoubleFile(event, 'back')">
+              <div class="side-empty-state" id="sideEmptyBack">
+                <div class="side-icon">🔢</div>
+                <div class="side-label">Orqa tomon rasmini tanlang</div>
+                <div class="side-sub">yoki bu yerga tashlang</div>
+              </div>
+              <div class="side-preview" id="sidePreviewBack" style="display:none">
+                <img id="sideImgBack" alt="Back Preview">
+                <div class="side-info" id="sideInfoBack"></div>
+                <button type="button" class="btn-clear-side" onclick="clearSide(event, 'back')">✕</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="double-action-row">
+          <button class="btn-primary btn-merge-main" id="btnMerge" onclick="runIDCardFullOCR()" disabled>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M6 7h8M6 10h5M13 13h1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="7" cy="13" r="1" fill="currentColor"/>
+            </svg>
+            🪪 Ikkala Tomonni Birlashtirish (Two-Sided Smart Merge)
+          </button>
+          <button class="btn-clear-all-double" onclick="clearDoubleAll()">
+            ✕ Ikkalasini tozalash
+          </button>
+        </div>
+      </section>
+    </div>
 
     <!-- Status Bar -->
     <div class="status-bar" id="statusBar" style="display:none">
@@ -144,6 +245,15 @@
               🤳 Selfie Match (KYC)
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- Auto-Swap Alert Banner -->
+      <div class="auto-swap-banner" id="autoSwapBanner" style="display:none">
+        <div class="swap-icon">🔄</div>
+        <div class="swap-content">
+          <strong>Smart Auto-Swap faollashdi:</strong>
+          <span>Siz yuklagan old va orqa tomon rasmlari teskari edi. Tizim ularni sun'iy intellekt orqali aniqladi va to'g'ri tartibda birlashtirdi.</span>
         </div>
       </div>
 

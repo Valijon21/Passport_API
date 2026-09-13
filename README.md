@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Tesseract-OCR-orange?style=for-the-badge" alt="Tesseract OCR" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0%20%2F%20Swagger-85EA2D?style=for-the-badge&logo=swagger&logoColor=black" alt="Swagger UI" />
   <img src="https://img.shields.io/badge/Biometriya-Spatial%20LBP-blueviolet?style=for-the-badge" alt="Biometrics" />
-  <img src="https://img.shields.io/badge/Versiya-v1.3.5-success?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/Versiya-v1.4.0-success?style=for-the-badge" alt="Version" />
   <img src="https://img.shields.io/badge/Litsenziya-MIT-lightgrey?style=for-the-badge" alt="License" />
 </p>
 
@@ -68,7 +68,18 @@ flowchart TD
 - **📍 Ma'muriy-Hududiy Toponimlar Filtratsiyasi (Tug'ilgan joyi):** Tug'ilgan joyini aniqlashda O'zbekiston ma'muriy birliklari (`... TUMANI`, `... SHAHRI`, `... VILOYATI`) ustuvorligi joriy etilgan (masalan: `POP TUMANI`), optik shovqinlar (`ENAMANGANN REGION`) to'liq bartaraf etiladi.
 - **Zonal Ko'p Kanalli Filtrlash (Multi-Channel Passes):** O'zbekiston pushti xaritasi, feruza to'lqinlar va gilyosh naqshlarini morfologik va rang kanallari orqali zararsizlantirish.
 
-### 2. 🛡️ ICAO 9303 Nazorat Yig'indisi & JSHSHIR Kross-Tekshiruvi (Anti-Fraud)
+### 2. 🪪 Two-Sided ID Karta Smart Merge & Anti-Fraud (v1.4.0 ✨)
+- **POST /api/v1/ocr/id-full/:** Foydalanuvchi bir vaqtda ID kartaning old (`front_image`) va orqa (`back_image`) tomonlarini yuklaydi.
+- **🔄 Smart Auto-Swap:** Agar foydalanuvchi adashib old va orqa rasmlarni teskari yuklasa, sun'iy intellekt har bir tomonning morfologiyasini avtomatik aniqlab, ularni to'g'ri o'rniga almashtiradi (`auto_swapped = True`).
+- **🛡️ 5 Bosqichli Kross-Tekshiruv (Anti-Fraud):**
+  1. Hujjat seriya raqami mosligi (Old vs Orqa MRZ);
+  2. Tug'ilgan sana mosligi (Old vs Orqa MRZ);
+  3. Amal qilish muddati mosligi (Old vs Orqa MRZ);
+  4. Ism-familiya mosligi va o'zbekcha transliteratsiya muvofiqligi;
+  5. 14 xonali JSHSHIR (PINFL) ning tug'ilgan sana va jins bilan mosligi.
+- **100% Yaxlit Fuqaro Profili (`citizen_profile`):** Old tomondagi shaxsiy ma'lumotlar + yuz surati, orqa tomondagi JSHSHIR, tug'ilgan joyi, berilgan sanasi va MRZ ma'lumotlari birlashtirilib, yagona profil sifatida qaytariladi.
+
+### 3. 🛡️ ICAO 9303 Nazorat Yig'indisi & JSHSHIR Kross-Tekshiruvi (Anti-Fraud)
 - **ICAO 9303 Check Digit Engine:** Standart 7-3-1 vaznli algoritmi orqali hujjat raqami, tug'ilgan sana va amal qilish muddatining haqiqiyligini tekshirish hamda matematik avto-tuzatish (Auto-Correction).
 - **JSHSHIR & Kross-Tekshiruv (Fraud Alert):** JSHSHIR ning 1-raqami (jins va asr) hamda 2–7 raqamlarini (DDMMYY) OCR orqali o'qilgan sana va jins bilan solishtirish. Soxta ma'lumot kiritilganda darhol xavf darajasini ko'rsatish.
 
@@ -116,6 +127,7 @@ Passport_API/
 │   │   └── urls.py                  # API v1 yo'nalishlari
 │   ├── tests/
 │   │   ├── test_face_engine.py      # Biometrik yuz taqqoslash testlari (100% OK)
+│   │   ├── test_id_full.py          # 🪪 Two-Sided Smart Merge & Anti-Fraud testlari (100% OK)
 │   │   ├── test_swagger.py          # OpenAPI 3.0 va Swagger testlari (100% OK)
 │   │   ├── test_mrz_validation.py   # ICAO 9303 va PINFL kross-tekshiruv testlari
 │   │   └── test_audit_fields.py     # Real kartalar ustida regressiya auditi
@@ -289,6 +301,91 @@ print(response.json())
     "original_dimensions": "1920x1080",
     "deskew_angle": 0.0
   },
+  "error": null
+}
+```
+
+---
+
+### 2. 🪪 ID Karta Ikkala Tomonini Birlashtirish (Two-Sided Smart Merge)
+
+`POST /api/v1/ocr/id-full/`  
+**Content-Type:** `multipart/form-data`
+
+Foydalanuvchi bir vaqtning o'zida ID kartaning old (`front_image`) va orqa (`back_image`) rasmlarini yuboradi. Tizim ikkala tomonni parallel tahlil qiladi, agar foydalanuvchi ularni adashib teskari yuklagan bo'lsa avtomatik to'g'irlaydi (**Smart Auto-Swap**), kross-tekshiruv o'tkazadi va yagona **Fuqaro Profili**ni qaytaradi.
+
+#### Parametrlar:
+| Maydon | Turi | Majburiy | Tavsif |
+|---|---|---|---|
+| `front_image` | Fayl (Image) | Ha | ID kartaning old tomoni rasmi (JPEG/PNG/WEBP/BMP, max 10MB) |
+| `back_image` | Fayl (Image) | Ha | ID kartaning orqa tomoni rasmi (JPEG/PNG/WEBP/BMP, max 10MB) |
+
+#### Python Misol:
+```python
+import requests
+
+url = "http://127.0.0.1:8000/api/v1/ocr/id-full/"
+files = {
+    'front_image': open('id_card_front.jpg', 'rb'),
+    'back_image': open('id_card_back.jpg', 'rb')
+}
+
+response = requests.post(url, files=files)
+print(response.json())
+```
+
+#### Muvaffaqiyatli JSON Javob (200 OK):
+```json
+{
+  "success": true,
+  "document_type": "ID_CARD",
+  "auto_swapped": false,
+  "confidence": 98.6,
+  "citizen_profile": {
+    "document_type": "ID_CARD",
+    "document_number": "AD8572239",
+    "personal_number": "32903892180078",
+    "surname": "YULDASHOV",
+    "first_name": "ABDUBAKIR",
+    "patronymic": "ABDULAXATOVICH",
+    "full_name": "YULDASHOV ABDUBAKIR ABDULAXATOVICH",
+    "date_of_birth": "1989-03-29",
+    "place_of_birth": "CHUST TUMANI",
+    "date_of_issue": "2024-09-11",
+    "date_of_expiry": "2034-09-10",
+    "issuing_authority": null,
+    "gender": "Erkak",
+    "nationality": "O'zbekiston"
+  },
+  "validation": {
+    "is_authentic": true,
+    "overall_status": "VERIFIED_MATCH",
+    "match_score": 100.0,
+    "checks": {
+      "document_number_match": { "status": "MATCH", "front": "AD8572239", "back": "AD8572239" },
+      "birth_date_match": { "status": "MATCH", "front": "1989-03-29", "back": "1989-03-29" },
+      "expiry_date_match": { "status": "MATCH", "front": "2034-09-10", "back": "2034-09-10" },
+      "name_match": { "status": "MATCH", "front": "YULDASHOV ABDUBAKIR", "back": "YULDASHOV ABDUBAKIR" },
+      "jshshir_validation": { "status": "verified", "is_valid": true, "alerts": [] }
+    },
+    "fraud_alerts": [],
+    "warnings": []
+  },
+  "face": {
+    "detected": true,
+    "box": { "x": 95, "y": 240, "w": 270, "h": 290 },
+    "image_base64": "data:image/jpeg;base64,...",
+    "confidence": 0.94
+  },
+  "mrz": {
+    "format": "TD1 (ID Card 3-line)",
+    "raw_lines": [
+      "IUUZBAD8572239732903892180078<",
+      "8903299M3409109UZBUZB<<<<<<<<4",
+      "YULDASHOV<<ABDUBAKIR<<<<<<<<<<"
+    ]
+  },
+  "processing_time_ms": 3420.5,
   "error": null
 }
 ```

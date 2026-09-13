@@ -138,3 +138,66 @@ class FaceMatchResponseSerializer(serializers.Serializer):
     processing_time_ms = serializers.FloatField(required=False, help_text="Tahlil vaqti millisekundlarda")
     error = serializers.CharField(allow_null=True, required=False, help_text="Xatolik xabari")
 
+
+class IDCardFullRequestSerializer(serializers.Serializer):
+    """ID karta old va orqa tomonlarini bir vaqtda yuklash uchun serializer."""
+    front_image = serializers.ImageField(
+        required=True,
+        help_text="ID kartaning old tomoni rasmi (JPEG/PNG/WEBP/BMP, maks 10MB)"
+    )
+    back_image = serializers.ImageField(
+        required=True,
+        help_text="ID kartaning orqa tomoni rasmi (JPEG/PNG/WEBP/BMP, maks 10MB)"
+    )
+
+    def validate_front_image(self, value):
+        content_type = getattr(value, 'content_type', '') or ''
+        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError("Old tomon fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
+        if value.size > MAX_FILE_SIZE:
+            raise serializers.ValidationError("Old tomon fayl hajmi 10 MB dan oshmasligi kerak.")
+        return value
+
+    def validate_back_image(self, value):
+        content_type = getattr(value, 'content_type', '') or ''
+        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError("Orqa tomon fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
+        if value.size > MAX_FILE_SIZE:
+            raise serializers.ValidationError("Orqa tomon fayl hajmi 10 MB dan oshmasligi kerak.")
+        return value
+
+
+class CitizenProfileSerializer(serializers.Serializer):
+    """100% To'liq fuqaro profili (ikkala tomon birlashgan holatda)."""
+    document_type = serializers.CharField(default="ID_CARD")
+    document_number = serializers.CharField(allow_null=True)
+    personal_number = serializers.CharField(allow_null=True, help_text="14 xonali JSHSHIR / PINFL")
+    surname = serializers.CharField(allow_null=True)
+    first_name = serializers.CharField(allow_null=True)
+    patronymic = serializers.CharField(allow_null=True)
+    full_name = serializers.CharField(allow_null=True)
+    date_of_birth = serializers.CharField(allow_null=True)
+    place_of_birth = serializers.CharField(allow_null=True)
+    date_of_issue = serializers.CharField(allow_null=True)
+    date_of_expiry = serializers.CharField(allow_null=True)
+    issuing_authority = serializers.CharField(allow_null=True)
+    gender = serializers.CharField(allow_null=True)
+    nationality = serializers.CharField(allow_null=True)
+
+
+class IDCardFullResponseSerializer(serializers.Serializer):
+    """POST /api/v1/ocr/id-full/ so'rovi uchun to'liq javob sxemasi."""
+    success = serializers.BooleanField()
+    document_type = serializers.CharField()
+    citizen_profile = CitizenProfileSerializer()
+    validation = serializers.DictField(help_text="Kross-tekshiruv, Anti-Fraud va ICAO tekshiruv natijalari")
+    face = serializers.DictField(allow_null=True, help_text="Hujjat old tomonidan qirqilgan biometrik yuz surati")
+    mrz = serializers.DictField(allow_null=True, help_text="Hujjat orqa tomonidan olingan 3 qatorli TD1 MRZ")
+    confidence = serializers.FloatField(help_text="Ikkala tomon bo'yicha umumiy aniqlik ko'rsatkichi")
+    auto_swapped = serializers.BooleanField(help_text="Foydalanuvchi old va orqa tomonlarni almashtirib yuborgan bo'lsa avtomatik tuzatildi")
+    front_side = serializers.DictField(required=False, help_text="Old tomonning xom OCR natijalari")
+    back_side = serializers.DictField(required=False, help_text="Orqa tomonning xom OCR natijalari")
+    processing_time_ms = serializers.FloatField()
+    error = serializers.CharField(allow_null=True, required=False)
+
+

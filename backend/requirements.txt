@@ -9,3 +9,4 @@ python-dotenv==1.0.0
 imutils==0.5.4
 drf-spectacular==0.30.0
 PyYAML==6.0.3
+pypdfium2>=4.30.0

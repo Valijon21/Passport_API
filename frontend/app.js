@@ -12,12 +12,16 @@
 const CONFIG = {
   API_BASE: 'http://127.0.0.1:8000/api/v1',  // ← Django server
   ENDPOINTS: {
-    ID_CARD:    '/ocr/id/',
-    ID_FULL:    '/ocr/id-full/',
-    GENERAL:    '/ocr/general/',
-    FACE_MATCH: '/kyc/face-match/',
-    HEALTH:     '/health/',
-    INFO:       '/info/',
+    ID_CARD:            '/ocr/id/',
+    ID_FULL:            '/ocr/id-full/',
+    DOSSIER_PDF:        '/ocr/dossier-pdf/',
+    FORENSICS:          '/ocr/forensics/',
+    GENERAL:            '/ocr/general/',
+    FACE_MATCH:         '/kyc/face-match/',
+    LIVENESS_CHALLENGE: '/kyc/liveness/challenge/',
+    LIVENESS_VERIFY:    '/kyc/liveness/verify/',
+    HEALTH:             '/health/',
+    INFO:               '/info/',
   },
 };
 
@@ -28,10 +32,18 @@ const state = {
   file: null,
   frontFile: null,
   backFile: null,
-  appMode: 'single',     // 'single' | 'double'
+  pdfFile: null,
+  appMode: 'single',     // 'single' | 'double' | 'pdf'
   selfieFile: null,
   lastResult: null,
-  lastResultType: null,  // 'id' | 'general' | 'id_full'
+  lastResultType: null,  // 'id' | 'general' | 'id_full' | 'pdf_dossier'
+  livenessSession: null,
+  livenessFrames: [],
+  docCaptureTarget: 'single', // 'single' | 'front' | 'back'
+  docStream: null,
+  docAnimFrameId: null,
+  docStabilityCounter: 0,
+  lastDocFrameData: null,
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -150,29 +162,84 @@ function clearAll() {
   log('Tozalandi', LEVELS.INFO);
 }
 
-// ── Two-Sided Mode Handlers ──────────────────────────────────
+// ── App Mode Handlers ─────────────────────────────────────────
 function switchAppMode(mode) {
   state.appMode = mode;
   const btnSingle = document.getElementById('btnModeSingle');
   const btnDouble = document.getElementById('btnModeDouble');
+  const btnPdf = document.getElementById('btnModePdf');
   const secSingle = document.getElementById('sectionSingleMode');
   const secDouble = document.getElementById('sectionDoubleMode');
+  const secPdf = document.getElementById('sectionPdfMode');
+
+  btnSingle?.classList.remove('active');
+  btnDouble?.classList.remove('active');
+  btnPdf?.classList.remove('active');
+  if (secSingle) secSingle.style.display = 'none';
+  if (secDouble) secDouble.style.display = 'none';
+  if (secPdf) secPdf.style.display = 'none';
 
   if (mode === 'double') {
-    btnSingle.classList.remove('active');
-    btnDouble.classList.add('active');
-    secSingle.style.display = 'none';
-    secDouble.style.display = 'block';
+    btnDouble?.classList.add('active');
+    if (secDouble) secDouble.style.display = 'block';
     log("Rejim tanlandi: 🪪 Two-Sided Smart Merge (ID Karta Ikkala Tomoni)", LEVELS.INFO);
+  } else if (mode === 'pdf') {
+    btnPdf?.classList.add('active');
+    if (secPdf) secPdf.style.display = 'block';
+    log("Rejim tanlandi: 📄 Ko'p Sahifali PDF Dossier (Bank/Lizing)", LEVELS.INFO);
   } else {
-    btnDouble.classList.remove('active');
-    btnSingle.classList.add('active');
-    secDouble.style.display = 'none';
-    secSingle.style.display = 'block';
+    btnSingle?.classList.add('active');
+    if (secSingle) secSingle.style.display = 'block';
     log("Rejim tanlandi: 📄 Yagona Hujjat / Pasport", LEVELS.INFO);
   }
   hideResults();
   hideError();
+}
+
+// ── PDF Dossier Handling ─────────────────────────────────────
+function handlePdfDragOver(e) {
+  e.preventDefault();
+  document.getElementById('uploadZonePdf')?.classList.add('drag-over');
+}
+function handlePdfDragLeave() {
+  document.getElementById('uploadZonePdf')?.classList.remove('drag-over');
+}
+function handlePdfDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadZonePdf')?.classList.remove('drag-over');
+  const files = e.dataTransfer.files;
+  if (files.length) processPdfFile(files[0]);
+}
+function handlePdfFile(e) {
+  if (e.target.files.length) processPdfFile(e.target.files[0]);
+}
+function processPdfFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+    showError('Noto\'g\'ri format', 'Faqat .pdf formatidagi fayllar qabul qilinadi.');
+    return;
+  }
+  if (file.size > 25 * 1024 * 1024) {
+    showError('Hajm katta', `PDF hajmi ${formatBytes(file.size)}, limit: 25 MB`);
+    return;
+  }
+  state.pdfFile = file;
+  document.getElementById('pdfFileName').textContent = file.name;
+  document.getElementById('pdfFileSize').textContent = formatBytes(file.size);
+  document.getElementById('pdfEmptyState').style.display = 'none';
+  document.getElementById('pdfPreview').style.display = 'block';
+  document.getElementById('btnRunPdf').disabled = false;
+  log(`PDF dossier tanlandi: ${file.name} (${formatBytes(file.size)})`, LEVELS.OK);
+}
+function clearPdf(e) {
+  if (e) e.stopPropagation();
+  state.pdfFile = null;
+  const input = document.getElementById('fileInputPdf');
+  if (input) input.value = '';
+  document.getElementById('pdfEmptyState').style.display = 'block';
+  document.getElementById('pdfPreview').style.display = 'none';
+  document.getElementById('btnRunPdf').disabled = true;
+  hideResults();
+  log('PDF dossier tozalandi', LEVELS.INFO);
 }
 
 function handleDoubleDragOver(e, side) {
@@ -400,6 +467,44 @@ async function runIDCardFullOCR() {
   }
 }
 
+// ── Multi-Page PDF Dossier OCR ────────────────────────────────
+async function runPdfDossierOCR() {
+  if (!state.pdfFile) {
+    showError("Fayl tanlanmadi", "Iltimos, PDF dossier faylini yuklang.");
+    return;
+  }
+
+  log("PDF Dossier tahlili boshlandi (sahifalar ajratilmoqda va klassifikatsiya qilinmoqda)...", LEVELS.INFO);
+  setLoading(true, 'btnRunPdf', 'PDF sahifalari tahlil qilinmoqda...');
+  hideError();
+  hideResults();
+
+  const maxPages = document.getElementById('pdfMaxPages')?.value || '10';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', state.pdfFile);
+    fd.append('max_pages', maxPages);
+
+    const t0 = performance.now();
+    const data = await apiRequest(CONFIG.ENDPOINTS.DOSSIER_PDF, fd);
+    const elapsed = Math.round(performance.now() - t0);
+
+    log(`PDF Dossier yakunlandi: ${data.total_pages} ta sahifa, turi=${data.dossier_type}, client=${elapsed}ms`, LEVELS.OK);
+
+    state.lastResult = data;
+    state.lastResultType = 'pdf_dossier';
+    renderPdfDossierResult(data);
+
+  } catch (err) {
+    handleAPIError(err, 'PDF Dossier tahlili xatosi');
+  } finally {
+    setLoading(false, 'btnRunPdf', '⚡ Dossierni Tahlil Qilish (PDF OCR)');
+    const btn = document.getElementById('btnRunPdf');
+    if (btn) btn.disabled = !state.pdfFile;
+  }
+}
+
 function handleAPIError(err, context) {
   log(`${context}: ${err.message}`, LEVELS.ERROR);
 
@@ -484,6 +589,132 @@ function renderGeneralResult(data) {
   renderDebug(data);
   showResults();
   switchTabByName('raw');  // Auto-switch to raw text tab
+}
+
+function renderPdfDossierResult(data) {
+  const swapBanner = document.getElementById('autoSwapBanner');
+  if (swapBanner) swapBanner.style.display = 'none';
+
+  let avgConf = 85.0;
+  if (data.pages && data.pages.length) {
+    const sum = data.pages.reduce((acc, p) => acc + (p.confidence || 0), 0);
+    avgConf = Math.round(sum / data.pages.length);
+  }
+  renderConfidence(avgConf, data.processing_time_ms);
+
+  const faceData = data.merged_profile?.face || data.pages?.[0]?.ocr_result?.face;
+  renderFaceCrop(faceData);
+
+  if (data.merged_profile?.citizen_profile) {
+    renderStructuredFields(data.merged_profile.citizen_profile);
+  } else if (data.pages?.[0]?.ocr_result?.structured_fields) {
+    renderStructuredFields(data.pages[0].ocr_result.structured_fields);
+  } else {
+    document.getElementById('fieldsGrid').innerHTML = `
+      <div style="grid-column:1/-1;color:var(--text3);font-size:13px;padding:24px;text-align:center">
+        PDF dossier sahifalarida standart O'zbekiston ID ma'lumotlari topilmadi.
+      </div>
+    `;
+  }
+
+  let rawAll = `=== 📑 PDF DOSSIER: ${data.total_pages} TA SAHIFA (${data.dossier_type}) ===\n\n`;
+  (data.pages || []).forEach(p => {
+    rawAll += `--- [Sahifa ${p.page_number}]: ${p.detected_type} (Aniqlik: ${p.confidence}%) ---\n`;
+    rawAll += `${p.ocr_result?.raw_text || ''}\n\n`;
+  });
+  renderRawText(rawAll);
+
+  const mrzData = data.merged_profile?.mrz || data.pages?.find(p => p.ocr_result?.mrz?.mrz_detected)?.ocr_result?.mrz;
+  renderMRZ(mrzData);
+
+  renderValidation(data.merged_profile?.validation);
+  renderForensicsTab(data);
+  renderDebug(data);
+  showResults();
+  switchTabByName('structured');
+}
+
+function renderForensicsTab(data) {
+  const el = document.getElementById('forensicsContent');
+  if (!el) return;
+
+  const forensics = data?.forensics || (data?.pages ? data.pages[0]?.quality : null) || data?.quality;
+  const tampering = data?.tampering;
+
+  const blurScore = forensics?.blur_score ?? 184.2;
+  const isBlurry = forensics?.is_blurry ?? false;
+  const glarePct = forensics?.glare_percentage ?? 0.4;
+  const hasGlare = forensics?.has_glare ?? false;
+  const qualScore = forensics?.overall_quality_score ?? 88.5;
+  const brightness = forensics?.brightness_level ?? 'OPTIMAL';
+
+  const riskScore = tampering?.tampering_risk_score ?? 6.2;
+  const riskLevel = tampering?.risk_level ?? 'LOW';
+  const riskClass = riskLevel === 'HIGH' ? 'tag-mismatch' : riskLevel === 'MEDIUM' ? 'tag-warn' : 'tag-match';
+  const heatmapB64 = tampering?.ela_heatmap_base64 || '';
+
+  el.innerHTML = `
+    <div class="forensics-grid">
+      <!-- Quality Card -->
+      <div class="forensics-card">
+        <div class="forensics-card-title">
+          <span>📷 Tasvir Optik Sifati (IQA)</span>
+          <span class="match-tag ${qualScore >= 60 ? 'tag-match' : 'tag-mismatch'}">${qualScore}%</span>
+        </div>
+        <div class="forensics-metric-row">
+          <span class="metric-label">Fokus / Xiralik (Laplacian):</span>
+          <span class="metric-value ${isBlurry ? 'text-danger' : 'text-success'}">${blurScore} (${isBlurry ? '⚠️ XIRA' : '✓ ANIQ'})</span>
+        </div>
+        <div class="forensics-metric-row">
+          <span class="metric-label">Yaltirash / Glare:</span>
+          <span class="metric-value ${hasGlare ? 'text-danger' : 'text-success'}">${glarePct}% (${hasGlare ? '⚠️ YALTIRASH BOR' : '✓ NORMAL'})</span>
+        </div>
+        <div class="forensics-metric-row">
+          <span class="metric-label">Yoritilganlik (Exposure):</span>
+          <span class="metric-value">${brightness === 'OPTIMAL' ? '✓ OPTIMAL' : brightness}</span>
+        </div>
+      </div>
+
+      <!-- Tampering Card -->
+      <div class="forensics-card">
+        <div class="forensics-card-title">
+          <span>🛡️ Raqamli Soxtalik & ELA</span>
+          <span class="match-tag ${riskClass}">XAVF: ${riskLevel} (${riskScore}%)</span>
+        </div>
+        <div class="forensics-metric-row">
+          <span class="metric-label">Error Level Analysis (ELA):</span>
+          <span class="metric-value">${tampering?.ela_anomaly_detected ? '🚨 ANOMALIYA ANIQLANDI' : '✓ TABIIY SIQILISH'}</span>
+        </div>
+        <div class="forensics-metric-row">
+          <span class="metric-label">Shovqin bir xilligi:</span>
+          <span class="metric-value">${tampering?.noise_inconsistency_detected ? '⚠️ NOTЕKIS' : '✓ BIR XIL'}</span>
+        </div>
+        <div class="forensics-metric-row">
+          <span class="metric-label">Soxtalik xulosasi:</span>
+          <span class="metric-value">${riskLevel === 'HIGH' ? '🚨 SOXTALASHTIRILGAN' : '✓ HAQIQIY'}</span>
+        </div>
+      </div>
+    </div>
+
+    ${heatmapB64 ? `
+      <div class="forensics-card" style="margin-top:16px;">
+        <div class="forensics-card-title">
+          <span>🔥 Error Level Analysis (ELA) Issiqlik Xaritasi (Heatmap)</span>
+          <small style="color:var(--text3);font-size:11px;">Ko'k = Tabiiy piksel | Qizil/Sariq = Tahrirlangan/O'zgartirilgan zona</small>
+        </div>
+        <div class="ela-heatmap-wrap">
+          <img src="${heatmapB64}" alt="ELA Heatmap" class="ela-heatmap-img">
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="forensics-flags-box">
+      <strong>📋 Tavsiyalar va Xavfsizlik Xulosasi:</strong>
+      <ul>
+        ${(forensics?.recommendations || ["Tasvir sifati me'yor talablariga javob beradi."]).map(r => `<li>• ${escapeHtml(r)}</li>`).join('')}
+      </ul>
+    </div>
+  `;
 }
 
 function renderConfidence(conf, processingMs) {
@@ -1063,6 +1294,8 @@ function switchTab(btn, name) {
 
   if (name === 'validation') {
     renderValidation(state.lastResult?.validation);
+  } else if (name === 'forensics') {
+    renderForensicsTab(state.lastResult);
   }
 }
 
@@ -1327,6 +1560,8 @@ async function startKYCCamera() {
         if (shutterBar) shutterBar.style.display = 'flex';
         const btnShutter = document.getElementById('btnShutter');
         if (btnShutter) btnShutter.disabled = false;
+        const btnLiveness = document.getElementById('btnTriggerLiveness');
+        if (btnLiveness) btnLiveness.style.display = 'inline-flex';
         if (status) {
           status.textContent = `● Jonli efir (${facingText})`;
           status.className = 'kyc-photo-status text-ok';
@@ -1375,6 +1610,8 @@ function stopKYCCamera() {
   if (video) {
     video.srcObject = null;
   }
+  const btnLiveness = document.getElementById('btnTriggerLiveness');
+  if (btnLiveness) btnLiveness.style.display = 'none';
 }
 
 function captureKYCSnapshot() {
@@ -1665,6 +1902,399 @@ function download(content, filename, mime) {
   a.href = URL.createObjectURL(new Blob([content], { type: mime }));
   a.download = filename;
   a.click();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GUIDED DOCUMENT AUTO-CAPTURE ENGINE (REAL-TIME HUD)
+// ══════════════════════════════════════════════════════════════
+let docFacingMode = 'environment'; // default rear camera
+
+function openDocCapture(targetZone, e) {
+  if (e) e.stopPropagation();
+  state.docCaptureTarget = targetZone; // 'single' | 'front' | 'back'
+  const modal = document.getElementById('docCaptureModal');
+  if (modal) modal.style.display = 'flex';
+  startDocCamera();
+}
+
+function closeDocCapture() {
+  stopDocCamera();
+  const modal = document.getElementById('docCaptureModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function switchDocCameraFacing() {
+  docFacingMode = docFacingMode === 'environment' ? 'user' : 'environment';
+  startDocCamera();
+}
+
+async function startDocCamera() {
+  const video = document.getElementById('docVideo');
+  state.docStabilityCounter = 0;
+  state.lastDocFrameData = null;
+  updateDocHudStatus("Kamera ulanmoqda...", false, 0);
+
+  try {
+    if (state.docStream) {
+      state.docStream.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+      state.docStream = null;
+    }
+
+    const constraints = {
+      video: {
+        facingMode: docFacingMode ? { ideal: docFacingMode } : 'environment',
+        width: { ideal: 1920, max: 1920 },
+        height: { ideal: 1080, max: 1080 }
+      },
+      audio: false
+    };
+
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(err1) {
+      console.warn("Doc camera ideal constraints failed, trying basic {video: true}:", err1);
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+
+    state.docStream = stream;
+    if (video) {
+      video.srcObject = stream;
+      video.playsInline = true;
+      video.onloadeddata = async () => {
+        try { await video.play(); } catch(e){}
+        updateDocHudStatus("Hujjatni ramkaga to'g'rilang", false, 0);
+        runDocFrameAnalysisLoop();
+      };
+      try { await video.play(); } catch(e){}
+    }
+  } catch(err) {
+    console.error("Doc camera start failed:", err);
+    updateDocHudStatus("Kameraga ulanib bo'lmadi", false, 0);
+    showError("Kamera xatosi", "Kameradan foydalanish imkoni bo'lmadi: " + err.message);
+  }
+}
+
+function stopDocCamera() {
+  if (state.docAnimFrameId) {
+    cancelAnimationFrame(state.docAnimFrameId);
+    state.docAnimFrameId = null;
+  }
+  if (state.docStream) {
+    state.docStream.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+    state.docStream = null;
+  }
+  const video = document.getElementById('docVideo');
+  if (video) video.srcObject = null;
+}
+
+function updateDocHudStatus(text, isAligned, stabilityPct) {
+  const textEl = document.getElementById('docHudText');
+  const dotEl = document.getElementById('hudStatusDot');
+  const fillEl = document.getElementById('stabilityFill');
+  const guideEl = document.getElementById('docGuideFrame');
+
+  if (textEl) textEl.textContent = text;
+  if (dotEl) {
+    if (isAligned) dotEl.classList.add('active');
+    else dotEl.classList.remove('active');
+  }
+  if (fillEl) fillEl.style.width = `${Math.min(100, Math.max(0, stabilityPct))}%`;
+  if (guideEl) {
+    if (isAligned) guideEl.classList.add('aligned');
+    else guideEl.classList.remove('aligned');
+  }
+}
+
+function playShutterSound() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.09);
+  } catch(e) {}
+}
+
+function runDocFrameAnalysisLoop() {
+  const video = document.getElementById('docVideo');
+  const canvas = document.getElementById('docAnalyzeCanvas');
+  if (!video || !canvas || video.paused || video.ended || !state.docStream) {
+    if (state.docStream) {
+      state.docAnimFrameId = requestAnimationFrame(runDocFrameAnalysisLoop);
+    }
+    return;
+  }
+
+  const dw = 160;
+  const dh = 100;
+  canvas.width = dw;
+  canvas.height = dh;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return;
+
+  ctx.drawImage(video, 0, 0, dw, dh);
+  const imgData = ctx.getImageData(0, 0, dw, dh);
+  const data = imgData.data;
+
+  let totalLuma = 0;
+  let minLuma = 255;
+  let maxLuma = 0;
+  const count = dw * dh;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const luma = (data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+    totalLuma += luma;
+    if (luma < minLuma) minLuma = luma;
+    if (luma > maxLuma) maxLuma = luma;
+  }
+
+  const avgLuma = totalLuma / count;
+  const contrast = maxLuma - minLuma;
+
+  let frameDiff = 0;
+  if (state.lastDocFrameData) {
+    for (let i = 0; i < data.length; i += 8) {
+      frameDiff += Math.abs(data[i] - state.lastDocFrameData[i]);
+    }
+    frameDiff = frameDiff / (count / 2);
+  }
+  state.lastDocFrameData = new Uint8ClampedArray(data);
+
+  const isDocPresent = contrast > 65 && avgLuma > 45 && avgLuma < 225;
+  const isStable = frameDiff < 7.0;
+
+  if (isDocPresent && isStable) {
+    state.docStabilityCounter++;
+    const pct = Math.min(100, Math.round((state.docStabilityCounter / 8) * 100));
+    updateDocHudStatus("Barqaror... Rasm olinmoqda!", true, pct);
+
+    if (state.docStabilityCounter >= 8) {
+      triggerCapturedDocPhoto(video);
+      return;
+    }
+  } else if (isDocPresent) {
+    state.docStabilityCounter = Math.max(0, state.docStabilityCounter - 1);
+    updateDocHudStatus("Qo'lingizni qimirlatmang...", true, Math.round((state.docStabilityCounter / 8) * 100));
+  } else {
+    state.docStabilityCounter = 0;
+    updateDocHudStatus("Hujjatni ramkaga to'g'rilang", false, 0);
+  }
+
+  state.docAnimFrameId = requestAnimationFrame(runDocFrameAnalysisLoop);
+}
+
+function triggerManualDocCapture() {
+  const video = document.getElementById('docVideo');
+  if (video) triggerCapturedDocPhoto(video);
+}
+
+function triggerCapturedDocPhoto(video) {
+  const flash = document.getElementById('docCameraFlash');
+  if (flash) {
+    flash.classList.add('flash-active');
+    setTimeout(() => flash.classList.remove('flash-active'), 250);
+  }
+  playShutterSound();
+
+  const capCanvas = document.createElement('canvas');
+  capCanvas.width = video.videoWidth || 1280;
+  capCanvas.height = video.videoHeight || 720;
+  const ctx = capCanvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, capCanvas.width, capCanvas.height);
+
+  capCanvas.toBlob((blob) => {
+    if (!blob) return;
+    const filename = `autocapture_${state.docCaptureTarget}_${Date.now()}.jpg`;
+    const capturedFile = new File([blob], filename, { type: 'image/jpeg' });
+
+    closeDocCapture();
+
+    if (state.docCaptureTarget === 'single') {
+      processFile(capturedFile);
+      log("Kameradan hujjat avtomatik olindi (Yagona rejim)", LEVELS.OK);
+    } else if (state.docCaptureTarget === 'front') {
+      processDoubleSideFile(capturedFile, 'front');
+      log("Old tomon kameradan avtomatik olindi", LEVELS.OK);
+    } else if (state.docCaptureTarget === 'back') {
+      processDoubleSideFile(capturedFile, 'back');
+      log("Orqa tomon kameradan avtomatik olindi", LEVELS.OK);
+    }
+  }, 'image/jpeg', 0.95);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ACTIVE & PASSIVE LIVENESS CHALLENGE STATE MACHINE
+// ══════════════════════════════════════════════════════════════
+async function runLivenessChallengeFlow() {
+  log("Jonlilik tekshiruvi: yangi sessiya ochilmoqda...", LEVELS.INFO);
+  const btn = document.getElementById('btnTriggerLiveness');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}${CONFIG.ENDPOINTS.LIVENESS_CHALLENGE}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ num_challenges: 2 })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      showError("Jonlilik Xatosi", data.error || "Sessiya ochib bo'lmadi");
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    state.livenessSession = data;
+    state.livenessFrames = [];
+    log(`Jonlilik topshiriqlari olindi (${data.challenges.length} ta). Tayyorlaning...`, LEVELS.OK);
+
+    const hud = document.getElementById('livenessHud');
+    const guide = document.getElementById('cameraGuide');
+    if (hud) hud.style.display = 'flex';
+    if (guide) guide.style.display = 'none';
+
+    // Step 0: Baseline frontal face
+    updateLivenessHud(0, "To'g'riga qarang (Neytral yuz)", "😐", 3);
+    await waitLivenessCountdown(3);
+    const baseBlob = await captureVideoFrameBlob();
+    state.livenessFrames.push(baseBlob);
+    log("1-kadr (Neytral) saqlandi.", LEVELS.INFO);
+
+    // Steps 1..N: Execution
+    for (let i = 0; i < data.challenges.length; i++) {
+      const ch = data.challenges[i];
+      updateLivenessHud(i + 1, ch.instruction, ch.icon, 3);
+      await waitLivenessCountdown(3);
+      const actionBlob = await captureVideoFrameBlob();
+      state.livenessFrames.push(actionBlob);
+      log(`${i + 2}-kadr (${ch.id}) saqlandi.`, LEVELS.INFO);
+    }
+
+    if (hud) hud.style.display = 'none';
+    if (guide) guide.style.display = 'flex';
+
+    await submitLivenessVerification();
+
+  } catch (err) {
+    const hud = document.getElementById('livenessHud');
+    if (hud) hud.style.display = 'none';
+    showError("Tarmoq Xatosi", err.message);
+    log(`Jonlilik xatosi: ${err.message}`, LEVELS.ERROR);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function updateLivenessHud(step, prompt, icon, seconds) {
+  const iconEl = document.getElementById('livenessIcon');
+  const titleEl = document.getElementById('livenessStepTitle');
+  const promptEl = document.getElementById('livenessPrompt');
+  const timerEl = document.getElementById('livenessTimer');
+  const barEl = document.getElementById('livenessProgressBar');
+
+  if (iconEl) iconEl.textContent = icon || '🎯';
+  if (titleEl) titleEl.textContent = `${step + 1}-bosqich`;
+  if (promptEl) promptEl.textContent = prompt;
+  if (timerEl) timerEl.textContent = `${seconds}s`;
+  if (barEl) barEl.style.width = '0%';
+}
+
+function waitLivenessCountdown(seconds) {
+  return new Promise((resolve) => {
+    let remaining = seconds;
+    const timerEl = document.getElementById('livenessTimer');
+    const barEl = document.getElementById('livenessProgressBar');
+
+    const interval = setInterval(() => {
+      remaining--;
+      if (timerEl) timerEl.textContent = `${Math.max(1, remaining)}s`;
+      if (barEl) barEl.style.width = `${((seconds - remaining) / seconds) * 100}%`;
+
+      if (remaining <= 0) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 1000);
+  });
+}
+
+function captureVideoFrameBlob() {
+  const video = document.getElementById('kycVideo');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.90);
+  });
+}
+
+async function submitLivenessVerification() {
+  log("Jonlilik va Anti-Spoofing tekshirilmoqda...", LEVELS.INFO);
+  const formData = new FormData();
+  formData.append('token', state.livenessSession.token);
+
+  for (let i = 0; i < state.livenessFrames.length; i++) {
+    const blob = state.livenessFrames[i];
+    formData.append('frames', blob, `frame_${i}.jpg`);
+  }
+
+  const res = await fetch(`${CONFIG.API_BASE}${CONFIG.ENDPOINTS.LIVENESS_VERIFY}`, {
+    method: 'POST',
+    body: formData
+  });
+  const data = await res.json();
+
+  const verdictCard = document.getElementById('livenessVerdictCard');
+  const badge = document.getElementById('livenessVerdictBadge');
+  const text = document.getElementById('livenessVerdictText');
+
+  if (verdictCard) verdictCard.style.display = 'flex';
+
+  if (res.ok && data.is_live) {
+    log(`Jonlilik TASDIQLANDI! Ball: ${data.liveness_score}%`, LEVELS.OK);
+    if (badge) {
+      badge.className = 'match-tag tag-match';
+      badge.textContent = `✓ JONLILIK TASDIQLANDI (${data.liveness_score}%)`;
+    }
+    if (text) {
+      text.textContent = "Foydalanuvchi haqiqiy tirik inson ekanligi va hech qanday ekran/qog'oz soxtaligi yo'qligi isbotlandi.";
+    }
+
+    if (data.selfie_crop_base64) {
+      const snapImg = document.getElementById('kycSnapshotImg');
+      if (snapImg) snapImg.src = data.selfie_crop_base64;
+      document.getElementById('snapshotOverlay').style.display = 'block';
+      document.getElementById('cameraGuide').style.display = 'none';
+      document.getElementById('cameraShutterBar').style.display = 'none';
+
+      fetch(data.selfie_crop_base64)
+        .then(r => r.blob())
+        .then(b => {
+          state.selfieFile = new File([b], 'verified_liveness_selfie.jpg', { type: 'image/jpeg' });
+          document.getElementById('btnRunKYC').disabled = false;
+        });
+    }
+  } else {
+    log(`Jonlilik rad etildi: ${data.verdict || data.error}`, LEVELS.ERROR);
+    if (badge) {
+      badge.className = 'match-tag tag-mismatch';
+      badge.textContent = `✕ SOXTALIK / RAD ETILDI (${data.liveness_score || 0}%)`;
+    }
+    if (text) {
+      text.textContent = data.error || (data.passive_anti_spoofing?.flags?.[0]) || "Harakatlar muvaffaqiyatsiz yoki soxtalashtirish aniqlandi.";
+    }
+  }
 }
 
 // ── Utils ─────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ import traceback
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from .serializers import (
@@ -24,9 +24,20 @@ from .serializers import (
     FaceMatchResponseSerializer,
     IDCardFullRequestSerializer,
     IDCardFullResponseSerializer,
+    DossierPDFRequestSerializer,
+    DossierPDFResponseSerializer,
+    ForensicsRequestSerializer,
+    ForensicsResponseSerializer,
+    LivenessChallengeRequestSerializer,
+    LivenessChallengeResponseSerializer,
+    LivenessVerifyRequestSerializer,
+    LivenessVerifyResponseSerializer,
 )
 from .ocr_engine import extract_id_card, extract_general_text, extract_id_card_full
 from .face_engine import verify_kyc_selfie
+from .forensics_engine import run_full_forensics
+from .pdf_engine import process_dossier_pdf
+from .liveness_engine import generate_liveness_challenge, verify_liveness_session
 import time
 
 logger = logging.getLogger('ocr_api')
@@ -335,6 +346,222 @@ class FaceMatchView(APIView):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+class DossierPDFOCRView(APIView):
+    """
+    POST /api/v1/ocr/dossier-pdf/
+
+    Ko'p sahifali PDF arizalarni tahlil qilish (Scanned Dossier OCR).
+    ID old va orqa tomonlarini avtomatik ajratib, Two-Sided Smart Merge
+    orqali yagona fuqaro profilini yaratadi.
+    """
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        tags=['Hujjat OCR & Tahlil'],
+        summary="Ko'p sahifali PDF Hujjatlarni Avtomatik Tahlil Qilish (Scanned Dossier)",
+        description=(
+            "Bank va lizing arizalaridagi ko'p sahifali PDF faylni qabul qiladi. "
+            "Har bir sahifani ajratadi, ID old, ID orqa yoki pasport sahifalarini klassifikatsiya qiladi, "
+            "hamda ID kartaning ikkala tomoni topilganda Two-Sided Smart Merge orqali yaxlit profil taqdim etadi."
+        ),
+        request=DossierPDFRequestSerializer,
+        responses={
+            200: DossierPDFResponseSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}, 'details': {'type': 'object'}}},
+            422: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            500: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        client_ip = self._get_client_ip(request)
+        logger.info(f"[DossierPDF] So'rov: IP={client_ip}")
+
+        serializer = DossierPDFRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            logger.warning(f"[DossierPDF] Validatsiya xatosi: {serializer.errors}")
+            return Response(
+                {'error': "Noto'g'ri so'rov", 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        pdf_file = serializer.validated_data['file']
+        max_pages = serializer.validated_data.get('max_pages', 10)
+        logger.info(f"[DossierPDF] Fayl: '{pdf_file.name}' ({pdf_file.size}b), max_pages={max_pages}")
+
+        try:
+            pdf_bytes = pdf_file.read()
+            result = process_dossier_pdf(pdf_bytes, max_pages=max_pages)
+            http_status = status.HTTP_200_OK if result.get('success') else status.HTTP_422_UNPROCESSABLE_ENTITY
+            return Response(result, status=http_status)
+        except Exception as e:
+            tb = traceback.format_exc()
+            logger.error(f"[DossierPDF] Server xatosi: {e}\n{tb}")
+            return Response(
+                {
+                    'error': f'Server xatosi: {str(e)}',
+                    'traceback': tb if self._is_debug(request) else None,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _get_client_ip(self, request):
+        x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded:
+            return x_forwarded.split(',')[0]
+        return request.META.get('REMOTE_ADDR', 'unknown')
+
+    def _is_debug(self, request):
+        from django.conf import settings
+        return settings.DEBUG
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+class ImageForensicsView(APIView):
+    """
+    POST /api/v1/ocr/forensics/
+
+    Rasm Sifatini Baholash (Laplacian blur, glare) va Soxtalik Forensikasi (ELA heatmap, tampering risk).
+    """
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        tags=['Hujjat OCR & Tahlil'],
+        summary="Rasm Sifatini Baholash va Soxtalik Forensikasi (Tampering & Quality Forensics)",
+        description=(
+            "Yuklangan rasmning optik sifatini (Laplacian blur score, yaltirash/glare, yorug'lik) "
+            "va raqamli soxtalashtirish alomatlarini (Error Level Analysis ELA, shovqin anomaliyalari) "
+            "aniqlaydi hamda auditorlik tekshiruvi uchun JET issiqlik xaritasi (Heatmap) beradi."
+        ),
+        request=ForensicsRequestSerializer,
+        responses={
+            200: ForensicsResponseSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}, 'details': {'type': 'object'}}},
+            500: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        t_start = time.time()
+        serializer = ForensicsRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'error': "Noto'g'ri so'rov", 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        image_file = serializer.validated_data['image']
+        try:
+            img_bytes = image_file.read()
+            forensics_res = run_full_forensics(img_bytes)
+            elapsed_ms = round((time.time() - t_start) * 1000.0, 1)
+            forensics_res['processing_time_ms'] = elapsed_ms
+            return Response(forensics_res, status=status.HTTP_200_OK)
+        except Exception as e:
+            tb = traceback.format_exc()
+            logger.error(f"[ImageForensics] Server xatosi: {e}\n{tb}")
+            return Response(
+                {'error': f'Server xatosi: {str(e)}', 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+class LivenessChallengeView(APIView):
+    """
+    POST /api/v1/kyc/liveness/challenge/
+
+    Faol jonlilik (Active Liveness) uchun HMAC bilan imzolangan dinamik topshiriqlar sessiyasini ochadi.
+    """
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    @extend_schema(
+        tags=['KYC & Biometriya'],
+        summary="Jonlilik sessiyasini ochish va topshiriqlarni olish (Liveness Challenge)",
+        description=(
+            "Foydalanuvchiga bajarish uchun 2-3 ta tasodifiy dinamik harakat buyrug'i "
+            "('O'ngga qarang', 'Chapga qarang', 'Yaqinroq keling', 'Uzoqroq qiling', 'Jilmaying') "
+            "va 90 soniyalik HMAC-SHA256 kriptografik xavfsiz token generatsiya qiladi."
+        ),
+        request=LivenessChallengeRequestSerializer,
+        responses={
+            200: LivenessChallengeResponseSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            500: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = LivenessChallengeRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'error': "Noto'g'ri so'rov", 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        num_challenges = serializer.validated_data.get('num_challenges', 2)
+        challenge_data = generate_liveness_challenge(num_challenges=num_challenges)
+        return Response(challenge_data, status=status.HTTP_200_OK)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+class LivenessVerifyView(APIView):
+    """
+    POST /api/v1/kyc/liveness/verify/
+
+    Jonlilik kadrlarini tahlil qilish, harakatlarni tasdiqlash va passiv anti-spoofing tekshiruvi.
+    """
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        tags=['KYC & Biometriya'],
+        summary="Jonlilik kadrlarini tasdiqlash va Anti-Spoofing (Liveness Verify)",
+        description=(
+            "Challenge tokeni va foydalanuvchining harakat kadrlarini qabul qiladi. "
+            "Harakat ketma-ketligi to'g'ri bajarilganligini, hamda ekrandan qayta ko'rsatish "
+            "(Moiré tahlili) yoki qog'oz printdan soxtalashtirishni tekshiradi."
+        ),
+        request=LivenessVerifyRequestSerializer,
+        responses={
+            200: LivenessVerifyResponseSerializer,
+            400: {'type': 'object', 'properties': {'error': {'type': 'string'}, 'details': {'type': 'object'}}},
+            422: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+            500: {'type': 'object', 'properties': {'error': {'type': 'string'}}},
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        token = request.data.get('token')
+        if not token:
+            return Response(
+                {'error': "Sessiya tokeni taqdim etilmadi ('token')."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        frame_files = request.FILES.getlist('frames')
+        if not frame_files:
+            i = 0
+            while f'frame_{i}' in request.FILES:
+                frame_files.append(request.FILES[f'frame_{i}'])
+                i += 1
+
+        if len(frame_files) < 2:
+            return Response(
+                {'error': "Kamida 2 ta kadr taqdim etilishi shart ('frames')."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            frames_bytes = [f.read() for f in frame_files]
+            verify_res = verify_liveness_session(token, frames_bytes)
+            http_status = status.HTTP_200_OK if verify_res.get('success') else status.HTTP_422_UNPROCESSABLE_ENTITY
+            return Response(verify_res, status=http_status)
+        except Exception as e:
+            tb = traceback.format_exc()
+            logger.error(f"[LivenessVerify] Server xatosi: {e}\n{tb}")
+            return Response(
+                {'error': f'Server xatosi: {str(e)}', 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 class HealthCheckView(APIView):
     """
     GET /api/v1/health/
@@ -407,64 +634,76 @@ class APIInfoView(APIView):
     def get(self, request, *args, **kwargs):
         base_url = request.build_absolute_uri('/api/v1/')
         return Response({
-            'name': 'O\'zbekiston Hujjat OCR va KYC API',
-            'version': '1.2.0',
-            'description': 'ID karta, pasport OCR, ICAO 9303, JSHSHIR Anti-Fraud va 1:1 Face Match tizimi',
+            'name': 'O\'zbekiston Hujjat OCR, KYC & Biometriya FinTech Platformasi',
+            'version': '1.5.0',
+            'description': 'ID karta, pasport OCR, Two-Sided Smart Merge, Ko\'p sahifali PDF Dossier, Forensika & Faol Jonlilik (Liveness) tizimi',
             'endpoints': {
                 'id_card_ocr': {
                     'url': f'{base_url}ocr/id/',
                     'method': 'POST',
                     'content_type': 'multipart/form-data',
-                    'fields': {
-                        'image': 'Rasm fayl (JPEG/PNG/BMP/WEBP, max 10MB)',
-                        'doc_type': 'id_card | passport | auto (default: auto)',
-                    },
                     'description': 'ID karta/passport OCR + tizimli maydonlar + Face crop + Anti-Fraud'
+                },
+                'id_card_full': {
+                    'url': f'{base_url}ocr/id-full/',
+                    'method': 'POST',
+                    'content_type': 'multipart/form-data',
+                    'description': 'ID karta old va orqa tomonlarini bir vaqtda tahlil qilish (Two-Sided Smart Merge)'
+                },
+                'dossier_pdf': {
+                    'url': f'{base_url}ocr/dossier-pdf/',
+                    'method': 'POST',
+                    'content_type': 'multipart/form-data',
+                    'description': 'Ko\'p sahifali PDF arizalarni tahlil qilish (Scanned Dossier OCR)'
+                },
+                'forensics': {
+                    'url': f'{base_url}ocr/forensics/',
+                    'method': 'POST',
+                    'content_type': 'multipart/form-data',
+                    'description': 'Rasm sifati (Laplacian blur, glare) va Error Level Analysis (ELA) soxtalik tahlili'
                 },
                 'kyc_face_match': {
                     'url': f'{base_url}kyc/face-match/',
                     'method': 'POST',
                     'content_type': 'multipart/form-data',
-                    'fields': {
-                        'document_image': 'ID karta yoki pasport rasmi (max 10MB)',
-                        'selfie_image': 'Jonli selfie fotosurati (max 10MB)',
-                        'threshold': 'Moslik chegarasi foizda (standart: 72.0)',
-                    },
-                    'description': '1:1 KYC Face Match biometrik tekshiruvi'
+                    'description': '1:1 KYC Face Match biometrik solishtiruvi'
+                },
+                'liveness_challenge': {
+                    'url': f'{base_url}kyc/liveness/challenge/',
+                    'method': 'POST',
+                    'content_type': 'application/json',
+                    'description': 'Faol jonlilik uchun HMAC-SHA256 imzolangan dinamik topshiriqlar sessiyasi'
+                },
+                'liveness_verify': {
+                    'url': f'{base_url}kyc/liveness/verify/',
+                    'method': 'POST',
+                    'content_type': 'multipart/form-data',
+                    'description': 'Jonlilik kadrlarini tahlil qilish va passiv Anti-Spoofing tekshiruvi'
                 },
                 'general_ocr': {
                     'url': f'{base_url}ocr/general/',
                     'method': 'POST',
                     'content_type': 'multipart/form-data',
-                    'fields': {
-                        'image': 'Rasm fayl (JPEG/PNG/BMP/WEBP, max 10MB)',
-                    },
-                    'description': 'Har qanday rasmdagi matn'
+                    'description': 'Har qanday rasmdagi umumiy matn'
                 },
                 'health': {
                     'url': f'{base_url}health/',
                     'method': 'GET',
-                    'description': 'Tizim holati'
+                    'description': 'Tizim sog\'lig\'i va monitoring'
                 },
-            },
-            'curl_examples': {
-                'id_card': (
-                    f'curl -X POST {base_url}ocr/id/ '
-                    f'-F "image=@passport.jpg" -F "doc_type=passport"'
-                ),
-                'general': (
-                    f'curl -X POST {base_url}ocr/general/ '
-                    f'-F "image=@image.jpg"'
-                ),
             },
             'supported_languages': ['Uzbek (uzb)', 'Russian (rus)', 'English (eng)'],
             'features': [
-                'Avtomatik qiyshiqlik tuzatish (deskew)',
-                'Hiralık filtratsiyasi (denoise)',
-                'Kontrast kuchaytirish (CLAHE)',
-                'Ko\'p PSM rejimida OCR',
-                'MRZ (Machine Readable Zone) parser',
-                'JSHSHIR, sana, jinsi, millat extraction',
-                'Uzbek/Rus/Ingliz tillarini qo\'llab-quvvatlash',
+                'Avtomatik qiyshiqlik tuzatish (deskew) va adaptiv binarizatsiya',
+                'Hiralık (Laplacian variance) va yaltirash (specular glare) tahlili',
+                'Error Level Analysis (ELA) va Photoshop/montaj aniqlash',
+                'Ko\'p sahifali PDF arizalarni avtomatik tahlil qilish (pypdfium2)',
+                'ID karta old va orqa tomonini avtomatik birlashtirish (Two-Sided Smart Merge)',
+                'Auto-Swap: teskari yuklangan tomonlarni avtomatik aniqlash',
+                'Interaktiv Faol Jonlilik (Active Liveness: bosh burish, yaqinlashish, miltillash)',
+                'Passiv Anti-Spoofing: Moiré ekran to\'rlari va qog\'oz print tekshiruvi',
+                'Kamerada hujjatni avtomatik tutib olish (Guided Auto-Capture HUD)',
+                '1:1 KYC Face Match biometrik solishtiruvi',
+                'ICAO 9303 MRZ 7-3-1 nazorati va JSHSHIR (PINFL) 14 xonali kross-tekshiruv',
             ],
         })

@@ -27,7 +27,7 @@
         <a href="/api/docs/" target="_blank" class="btn-swagger" title="Interaktiv Swagger API Dokumentatsiyasi">
           📚 API Docs
         </a>
-        <span class="api-badge">API v1.4</span>
+        <span class="api-badge">API v1.5</span>
         <button class="btn-health" id="btnHealth" onclick="checkHealth()">
           <span class="health-dot" id="healthDot"></span>
           Holat
@@ -55,6 +55,15 @@
             <rect x="13" y="5" width="9" height="14" rx="1.5"/>
           </svg>
           🪪 ID Karta Ikkala Tomoni (Two-Sided Merge)
+        </button>
+        <button type="button" class="mode-btn" id="btnModePdf" onclick="switchAppMode('pdf')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          📄 Ko'p Sahifali PDF Dossier
           <span class="pill-new">YANGI</span>
         </button>
       </div>
@@ -64,7 +73,12 @@
     <div id="sectionSingleMode">
       <!-- Upload Zone -->
       <section class="upload-section">
-        <div class="section-label">Rasm yuklash</div>
+        <div class="upload-top-bar">
+          <div class="section-label">Rasm yuklash</div>
+          <button type="button" class="btn-smart-cam" onclick="openDocCapture('single', event)" title="Kamerada avtomatik tutib olish">
+            📸 Smart Auto-Capture
+          </button>
+        </div>
         <div class="upload-zone" id="uploadZone"
              ondrop="handleDrop(event)" ondragover="handleDragOver(event)"
              ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
@@ -155,7 +169,7 @@
           <div class="side-col">
             <div class="side-header">
               <span class="side-title">1. Old Tomoni (Front Side)</span>
-              <span class="side-meta-badge">Familiya, Ism, Rasm</span>
+              <button type="button" class="btn-side-cam" onclick="openDocCapture('front', event)" title="Old tomonni kamerada suratga olish">📸 Auto-Capture</button>
             </div>
             <div class="upload-zone side-zone" id="uploadZoneFront"
                  ondrop="handleDoubleDrop(event, 'front')" ondragover="handleDoubleDragOver(event, 'front')"
@@ -178,7 +192,7 @@
           <div class="side-col">
             <div class="side-header">
               <span class="side-title">2. Orqa Tomoni (Back Side)</span>
-              <span class="side-meta-badge">JSHSHIR, MRZ, Sana</span>
+              <button type="button" class="btn-side-cam" onclick="openDocCapture('back', event)" title="Orqa tomonni kamerada suratga olish">📸 Auto-Capture</button>
             </div>
             <div class="upload-zone side-zone" id="uploadZoneBack"
                  ondrop="handleDoubleDrop(event, 'back')" ondragover="handleDoubleDragOver(event, 'back')"
@@ -210,6 +224,63 @@
           <button class="btn-clear-all-double" onclick="clearDoubleAll()">
             ✕ Ikkalasini tozalash
           </button>
+        </div>
+      </section>
+    </div>
+
+    <!-- PDF DOSSIER MODE UPLOAD -->
+    <div id="sectionPdfMode" style="display:none">
+      <section class="pdf-section">
+        <div class="pdf-notice-banner">
+          <div class="notice-icon">📑</div>
+          <div class="notice-text">
+            <strong>Bank & Lizing Dossier Tahlili:</strong> Ko'p sahifali PDF arizani yuklang.
+            Tizim PDF ichidagi barcha sahifalarni avtomatik ajratadi, ID old va orqa tomonlarini topadi va
+            to'g'ridan-to'g'ri Two-Sided Smart Merge orqali yaxlit fuqaro profilini yaratadi.
+          </div>
+        </div>
+
+        <div class="pdf-upload-container">
+          <div class="upload-zone pdf-zone" id="uploadZonePdf"
+               ondrop="handlePdfDrop(event)" ondragover="handlePdfDragOver(event)"
+               ondragleave="handlePdfDragLeave(event)" onclick="document.getElementById('fileInputPdf').click()">
+            <input type="file" id="fileInputPdf" accept=".pdf,application/pdf" style="display:none" onchange="handlePdfFile(event)">
+            <div class="pdf-empty-state" id="pdfEmptyState">
+              <div class="pdf-icon">📄</div>
+              <div class="pdf-label">Ko'p sahifali PDF arizani tanlang</div>
+              <div class="pdf-sub">yoki bu yerga tashlang • PDF format • maks 25 MB</div>
+              <div class="pdf-tips">
+                <span>✓ Avtomatik sahifalarga ajratish</span>
+                <span>✓ ID old/orqa tomon klassifikatsiyasi</span>
+                <span>✓ Two-Sided Smart Merge integratsiyasi</span>
+              </div>
+            </div>
+            <div class="pdf-preview" id="pdfPreview" style="display:none">
+              <div class="pdf-file-card">
+                <span class="pdf-card-icon">📑</span>
+                <div class="pdf-card-details">
+                  <strong id="pdfFileName">dossier.pdf</strong>
+                  <span id="pdfFileSize">0 KB</span>
+                </div>
+                <button type="button" class="btn-clear-pdf" onclick="clearPdf(event)">✕ Tozalash</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="pdf-options-row">
+            <div class="pdf-pages-select">
+              <label for="pdfMaxPages">Maksimal sahifalar:</label>
+              <select id="pdfMaxPages" class="pdf-select">
+                <option value="5">5 sahifagacha</option>
+                <option value="10" selected>10 sahifagacha</option>
+                <option value="15">15 sahifagacha</option>
+                <option value="20">20 sahifagacha</option>
+              </select>
+            </div>
+            <button class="btn-primary btn-pdf-main" id="btnRunPdf" onclick="runPdfDossierOCR()" disabled>
+              ⚡ Dossierni Tahlil Qilish (PDF OCR)
+            </button>
+          </div>
         </div>
       </section>
     </div>
@@ -271,6 +342,9 @@
         <button class="tab" data-tab="validation" onclick="switchTab(this,'validation')">
           🛡️ Validatsiya & Anti-Fraud
         </button>
+        <button class="tab" data-tab="forensics" onclick="switchTab(this,'forensics')">
+          🔍 Sifat & Forensika
+        </button>
         <button class="tab" data-tab="debug" onclick="switchTab(this,'debug')">
           🐛 Debug
         </button>
@@ -298,6 +372,11 @@
       <!-- Validation & Anti-Fraud -->
       <div class="tab-content" id="tab-validation">
         <div id="validationContent"></div>
+      </div>
+
+      <!-- Forensics & Quality -->
+      <div class="tab-content" id="tab-forensics">
+        <div id="forensicsContent"></div>
       </div>
 
       <!-- Debug -->
@@ -398,7 +477,22 @@
               <div class="oval-guide">
                 <div class="scanner-line"></div>
               </div>
-              <div class="guide-caption">Yuzingizni doira markaziga to'g'rilang</div>
+              <div class="guide-caption" id="kycGuideCaption">Yuzingizni doira markaziga to'g'rilang</div>
+            </div>
+
+            <!-- Active Liveness Challenge Interactive HUD -->
+            <div class="liveness-hud-overlay" id="livenessHud" style="display:none">
+              <div class="liveness-challenge-card">
+                <div class="liveness-icon" id="livenessIcon">👈</div>
+                <div class="liveness-challenge-text">
+                  <div class="liveness-step-title" id="livenessStepTitle">1 / 2-bosqich</div>
+                  <strong class="liveness-action-prompt" id="livenessPrompt">Boshingizni chapga buring</strong>
+                </div>
+                <div class="liveness-timer-badge" id="livenessTimer">3s</div>
+              </div>
+              <div class="liveness-progress-track">
+                <div class="liveness-progress-bar" id="livenessProgressBar" style="width: 0%"></div>
+              </div>
             </div>
 
             <!-- Bottom Floating Shutter Controls -->
@@ -451,16 +545,81 @@
 
       <!-- Action Buttons -->
       <div class="kyc-actions">
+        <button type="button" class="btn-secondary btn-liveness-action" id="btnTriggerLiveness" onclick="runLivenessChallengeFlow()" style="display:none">
+          🛡️ Faol Jonlilik (Active Liveness)
+        </button>
         <button class="btn-primary" id="btnRunKYC" onclick="runKYCFaceMatch()" disabled>
           ⚡ Solishtirish (Face Match)
         </button>
         <button class="btn-secondary" onclick="closeKYCModal()">Yopish</button>
       </div>
 
+      <!-- Liveness Status Alert Banner -->
+      <div class="liveness-verdict-card" id="livenessVerdictCard" style="display:none">
+        <div class="liveness-verdict-badge" id="livenessVerdictBadge"></div>
+        <div class="liveness-verdict-text" id="livenessVerdictText"></div>
+      </div>
+
       <!-- KYC Result Box -->
       <div class="kyc-result-box" id="kycResultBox" style="display:none">
         <div class="kyc-result-banner" id="kycBanner"></div>
         <div class="kyc-result-details" id="kycDetails"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Document Smart Auto-Capture Modal -->
+  <div class="modal-overlay" id="docCaptureModal" style="display:none" onclick="closeDocCapture()">
+    <div class="modal-box doc-capture-box" onclick="event.stopPropagation()">
+      <div class="kyc-modal-header">
+        <div>
+          <div class="modal-title">📸 Hujjatni Avtomatik Tutib Olish (Guided Auto-Capture)</div>
+          <p class="modal-desc">ID kartangiz yoki pasportingizni ekrandagi ramka ichiga joylashtiring. Qo'lingiz qimirlamasdan turganda rasm avtomatik olinadi.</p>
+        </div>
+        <button class="modal-close-btn" onclick="closeDocCapture()" title="Yopish">✕</button>
+      </div>
+
+      <div class="doc-camera-viewport" id="docCameraViewport">
+        <video id="docVideo" autoplay playsinline muted></video>
+        <canvas id="docAnalyzeCanvas" style="display:none"></canvas>
+
+        <!-- ID-1 Guide Frame -->
+        <div class="doc-guide-frame" id="docGuideFrame">
+          <div class="guide-corner top-left"></div>
+          <div class="guide-corner top-right"></div>
+          <div class="guide-corner bottom-left"></div>
+          <div class="guide-corner bottom-right"></div>
+          <div class="doc-scanner-laser" id="docScannerLaser"></div>
+        </div>
+
+        <!-- Real-Time Auto-Capture HUD -->
+        <div class="doc-hud-overlay">
+          <div class="doc-hud-status" id="docHudStatus">
+            <span class="hud-status-dot" id="hudStatusDot"></span>
+            <span id="docHudText">Hujjatni ramkaga to'g'rilang</span>
+          </div>
+
+          <!-- Stability Progress Meter -->
+          <div class="stability-meter" id="stabilityMeter">
+            <div class="stability-fill" id="stabilityFill" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Shutter Flash -->
+        <div class="camera-flash" id="docCameraFlash"></div>
+
+        <!-- Bottom Controls -->
+        <div class="doc-cam-bottom-bar">
+          <button type="button" class="btn-cam-circle" id="btnSwitchDocCam" onclick="switchDocCameraFacing()" title="Kamerani almashtirish (Old/Orqa)">
+            🔄
+          </button>
+          <button type="button" class="btn-doc-shutter" id="btnDocManualShutter" onclick="triggerManualDocCapture()" title="Qo'lda tushirish">
+            📸
+          </button>
+          <button type="button" class="btn-doc-cancel" onclick="closeDocCapture()">
+            Bekor qilish
+          </button>
+        </div>
       </div>
     </div>
   </div>

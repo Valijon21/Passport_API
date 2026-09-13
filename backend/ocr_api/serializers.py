@@ -201,3 +201,121 @@ class IDCardFullResponseSerializer(serializers.Serializer):
     error = serializers.CharField(allow_null=True, required=False)
 
 
+# ── PDF Dossier Serializers ───────────────────────────────────────────────────
+
+MAX_PDF_SIZE = 25 * 1024 * 1024  # 25 MB
+
+
+class DossierPDFRequestSerializer(serializers.Serializer):
+    """Ko'p sahifali PDF arizalar uchun so'rov serializeri."""
+    file = serializers.FileField(
+        required=True,
+        help_text="Ko'p sahifali PDF arizasi yoki hujjati (PDF format, maks 25 MB)"
+    )
+    max_pages = serializers.IntegerField(
+        required=False,
+        default=10,
+        min_value=1,
+        max_value=20,
+        help_text="Tahlil qilinadigan maksimal sahifalar soni (standart: 10)"
+    )
+
+    def validate_file(self, value):
+        if value.size > MAX_PDF_SIZE:
+            raise serializers.ValidationError("PDF fayl hajmi 25 MB dan oshmasligi kerak.")
+        filename = getattr(value, 'name', '') or ''
+        content_type = getattr(value, 'content_type', '') or ''
+        if not filename.lower().endswith('.pdf') and content_type not in ('application/pdf', 'application/x-pdf', 'application/octet-stream'):
+            raise serializers.ValidationError("Faqat PDF formatdagi fayllar qabul qilinadi (.pdf).")
+        return value
+
+
+class DossierPDFResponseSerializer(serializers.Serializer):
+    """Ko'p sahifali PDF tahlili javob sxemasi."""
+    success = serializers.BooleanField()
+    dossier_type = serializers.CharField(help_text="Hujjat turi: TWO_SIDED_ID_DOSSIER, PASSPORT_DOSSIER, MULTI_PAGE_DOCUMENT")
+    total_pages = serializers.IntegerField()
+    pages_processed = serializers.IntegerField()
+    summary = serializers.CharField()
+    merged_profile = serializers.DictField(allow_null=True, required=False)
+    pages = serializers.ListField(child=serializers.DictField())
+    processing_time_ms = serializers.FloatField()
+    error = serializers.CharField(allow_null=True, required=False)
+
+
+# ── Forensics & Quality Serializers ───────────────────────────────────────────
+
+class ForensicsRequestSerializer(serializers.Serializer):
+    """Rasm sifati va raqamli soxtalik tahlili so'rovi."""
+    image = serializers.ImageField(
+        required=True,
+        help_text="Tahlil qilinadigan rasm (JPEG/PNG/WEBP/BMP, maks 10 MB)"
+    )
+
+    def validate_image(self, value):
+        if value.size > MAX_FILE_SIZE:
+            raise serializers.ValidationError("Rasm hajmi 10 MB dan oshmasligi kerak.")
+        return value
+
+
+class ForensicsResponseSerializer(serializers.Serializer):
+    """Rasm sifati va raqamli soxtalik tahlili javobi."""
+    success = serializers.BooleanField()
+    quality = serializers.DictField(help_text="Laplacian xiralik, yaltirash va yorug'lik tahlili")
+    tampering = serializers.DictField(help_text="Error Level Analysis (ELA) va Photoshop soxtalik tahlili")
+    processing_time_ms = serializers.FloatField()
+    error = serializers.CharField(allow_null=True, required=False)
+
+
+# ── Liveness & Anti-Spoofing Serializers ───────────────────────────────────────
+
+class LivenessChallengeRequestSerializer(serializers.Serializer):
+    """Jonlilik tekshiruvi uchun interaktiv sessiya ochish so'rovi."""
+    num_challenges = serializers.IntegerField(
+        required=False,
+        default=2,
+        min_value=1,
+        max_value=4,
+        help_text="Generatsiya qilinadigan harakat savollari soni (standart: 2)"
+    )
+
+
+class LivenessChallengeResponseSerializer(serializers.Serializer):
+    """Jonlilik sessiyasi javob sxemasi."""
+    success = serializers.BooleanField()
+    session_id = serializers.CharField()
+    token = serializers.CharField(help_text="HMAC-SHA256 bilan imzolangan xavfsiz sessiya tokeni")
+    expires_in_seconds = serializers.IntegerField()
+    challenges_count = serializers.IntegerField()
+    challenges = serializers.ListField(child=serializers.DictField())
+
+
+class LivenessVerifyRequestSerializer(serializers.Serializer):
+    """Jonlilik kadrlarini tekshirish so'rovi."""
+    token = serializers.CharField(
+        required=True,
+        help_text="Challenge bosqichida olingan HMAC sessiya tokeni"
+    )
+    frames = serializers.ListField(
+        child=serializers.ImageField(),
+        min_length=2,
+        max_length=6,
+        help_text="Kadrlar ketma-ketligi: 1-kadr neytral yuz, keyingilari berilgan topshiriqlar bo'yicha"
+    )
+
+
+class LivenessVerifyResponseSerializer(serializers.Serializer):
+    """Jonlilik va Anti-Spoofing tekshiruvi javob sxemasi."""
+    success = serializers.BooleanField()
+    is_live = serializers.BooleanField(help_text="Foydalanuvchi haqiqiy tirik inson ekanligi tasdiqlandimi")
+    liveness_score = serializers.FloatField(help_text="Umumiy jonlilik balli (0.0% - 100.0%)")
+    verdict = serializers.CharField(help_text="Xulosa: LIVE_AUTHENTIC, SPOOF_ATTACK_DETECTED, CHALLENGE_FAILED")
+    session_id = serializers.CharField(allow_null=True, required=False)
+    challenges_verified = serializers.ListField(child=serializers.DictField())
+    passive_anti_spoofing = serializers.DictField(allow_null=True, required=False)
+    selfie_crop_base64 = serializers.CharField(allow_null=True, required=False)
+    processing_time_ms = serializers.FloatField()
+    error = serializers.CharField(allow_null=True, required=False)
+
+
+

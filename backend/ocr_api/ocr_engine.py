@@ -1464,45 +1464,100 @@ def merge_id_card_sides(
     matched_count = sum(1 for c in evaluated_checks if c.get('status') == 'MATCH')
     match_score = round((matched_count / len(evaluated_checks)) * 100.0, 1) if evaluated_checks else 100.0
 
-    all_checks_passed = (len(fraud_alerts) == 0)
+    # ── Strict Different Cards Detection (Anti-Fraud Pairing Gate) ───────────
+    different_cards_detected = False
+    mismatch_reasons = []
+
+    # Check 1: Explicit Document Number Mismatch
+    if checks.get('document_number_match', {}).get('status') == 'MISMATCH':
+        different_cards_detected = True
+        mismatch_reasons.append(f"Hujjat raqamlari har xil (Old: '{f_doc}', Orqa: '{b_doc}')")
+
+    # Check 2: Explicit Birth Date Mismatch
+    if checks.get('birth_date_match', {}).get('status') == 'MISMATCH':
+        different_cards_detected = True
+        mismatch_reasons.append(f"Tug'ilgan sanalari har xil (Old: '{f_dob}', Orqa: '{b_dob}')")
+
+    # Check 3: Explicit Name Mismatch
+    if checks.get('name_match', {}).get('status') == 'MISMATCH':
+        different_cards_detected = True
+        mismatch_reasons.append(f"Ism-familiyalari har xil (Old: '{f_sur} {f_first}', Orqa: '{b_sur} {b_first}')")
+
+    if different_cards_detected:
+        match_score = min(match_score, 25.0)
+        loud_alert = (
+            f"🚨 QALBAKILIK / XATOLIK: Yuklangan old va orqa tomonlar ikki xil ID kartaga tegishli! "
+            f"({'; '.join(mismatch_reasons)}). Ma'lumotlarni soxta birlashtirish rad etildi."
+        )
+        if loud_alert not in fraud_alerts:
+            fraud_alerts.insert(0, loud_alert)
+
+    all_checks_passed = (len(fraud_alerts) == 0) and not different_cards_detected
     back_auth = back_res.get('validation', {}).get('is_authentic', True)
     is_authentic = all_checks_passed and (match_score >= 80.0)
     if not back_auth and is_authentic:
         warnings.append("Orqa tomon MRZ belgilarida noaniqlik bo'ldi, biroq old tomon va JSHSHIR kross-tekshiruvi orqali shaxs 100% tasdiqlandi.")
     
-    overall_status = 'VERIFIED_MATCH' if is_authentic else ('SUSPECTED_FRAUD' if fraud_alerts else 'WARNING')
-    doc_number = f_doc or b_doc or front_sf.get('document_number') or back_sf.get('document_number')
-    surname = front_sf.get('surname') or back_sf.get('surname') or back_mrz.get('surname')
-    first_name = front_sf.get('first_name') or back_sf.get('first_name') or back_mrz.get('first_name')
-    patronymic = front_sf.get('patronymic') or back_sf.get('patronymic')
-    
-    full_name_parts = [p for p in [surname, first_name, patronymic] if p]
-    full_name = ' '.join(full_name_parts)
+    overall_status = 'VERIFIED_MATCH' if is_authentic else ('SUSPECTED_FRAUD' if (fraud_alerts or different_cards_detected) else 'WARNING')
 
-    birth_date = f_dob or b_dob
-    expiry_date = b_exp or f_exp
-    issue_date = front_sf.get('issue_date') or back_sf.get('issue_date')
-    gender = front_sf.get('gender') or back_sf.get('gender') or back_mrz.get('gender')
-    nationality = front_sf.get('nationality') or back_sf.get('nationality') or "O'zbekiston"
-    birth_place = back_sf.get('birth_place') or front_sf.get('birth_place')
-    issuing_authority = back_sf.get('issuing_authority') or front_sf.get('issuing_authority')
+    # ── Citizen Profile Construction ──────────────────────────────────────────
+    if different_cards_detected:
+        # CRITICAL FINTECH RULE:
+        # DO NOT cross-pollinate Person B's JSHSHIR or Person B's birth place into Person A's profile!
+        full_name_parts = [p for p in [front_sf.get('surname'), front_sf.get('first_name'), front_sf.get('patronymic')] if p]
+        full_name = ' '.join(full_name_parts)
+        citizen_profile: Dict[str, Any] = {
+            'document_type': 'ID_CARD',
+            'document_number': f_doc or front_sf.get('document_number'),
+            'personal_number': front_sf.get('jshshir'),  # Do NOT use back's mismatched JSHSHIR!
+            'surname': front_sf.get('surname'),
+            'first_name': front_sf.get('first_name'),
+            'patronymic': front_sf.get('patronymic'),
+            'full_name': full_name,
+            'date_of_birth': f_dob,
+            'place_of_birth': front_sf.get('birth_place'),  # Do NOT use back's mismatched birth place!
+            'date_of_issue': front_sf.get('issue_date'),
+            'date_of_expiry': f_exp,
+            'issuing_authority': front_sf.get('issuing_authority'),
+            'gender': front_sf.get('gender'),
+            'nationality': front_sf.get('nationality') or "O'zbekiston",
+            'is_valid_pair': False,
+            'different_cards_detected': True,
+            'mismatch_warning': f"Old va orqa tomonlar ikki xil ID kartaga tegishli! ({'; '.join(mismatch_reasons)})"
+        }
+    else:
+        doc_number = f_doc or b_doc or front_sf.get('document_number') or back_sf.get('document_number')
+        surname = front_sf.get('surname') or back_sf.get('surname') or back_mrz.get('surname')
+        first_name = front_sf.get('first_name') or back_sf.get('first_name') or back_mrz.get('first_name')
+        patronymic = front_sf.get('patronymic') or back_sf.get('patronymic')
+        full_name_parts = [p for p in [surname, first_name, patronymic] if p]
+        full_name = ' '.join(full_name_parts)
+        birth_date = f_dob or b_dob
+        expiry_date = b_exp or f_exp
+        issue_date = front_sf.get('issue_date') or back_sf.get('issue_date')
+        gender = front_sf.get('gender') or back_sf.get('gender') or back_mrz.get('gender')
+        nationality = front_sf.get('nationality') or back_sf.get('nationality') or "O'zbekiston"
+        birth_place = back_sf.get('birth_place') or front_sf.get('birth_place')
+        issuing_authority = back_sf.get('issuing_authority') or front_sf.get('issuing_authority')
 
-    citizen_profile: Dict[str, Any] = {
-        'document_type': 'ID_CARD',
-        'document_number': doc_number,
-        'personal_number': jshshir,
-        'surname': surname,
-        'first_name': first_name,
-        'patronymic': patronymic,
-        'full_name': full_name,
-        'date_of_birth': birth_date,
-        'place_of_birth': birth_place,
-        'date_of_issue': issue_date,
-        'date_of_expiry': expiry_date,
-        'issuing_authority': issuing_authority,
-        'gender': gender,
-        'nationality': nationality,
-    }
+        citizen_profile: Dict[str, Any] = {
+            'document_type': 'ID_CARD',
+            'document_number': doc_number,
+            'personal_number': jshshir,
+            'surname': surname,
+            'first_name': first_name,
+            'patronymic': patronymic,
+            'full_name': full_name,
+            'date_of_birth': birth_date,
+            'place_of_birth': birth_place,
+            'date_of_issue': issue_date,
+            'date_of_expiry': expiry_date,
+            'issuing_authority': issuing_authority,
+            'gender': gender,
+            'nationality': nationality,
+            'is_valid_pair': True,
+            'different_cards_detected': False,
+        }
 
     # 4. Biometrics (Face Portrait)
     face_data = front_res.get('face') or back_res.get('face') or {
@@ -1519,11 +1574,15 @@ def merge_id_card_sides(
     conf_front = float(front_res.get('confidence', 0.0) or 0.0)
     conf_back = float(back_res.get('confidence', 0.0) or 0.0)
     confidence = round((conf_front * 0.5 + conf_back * 0.5), 1) if (conf_front or conf_back) else 0.0
+    if different_cards_detected:
+        confidence = min(confidence, 35.0)
 
     validation_summary = {
         'is_authentic': is_authentic,
-        'overall_status': 'VERIFIED_MATCH' if is_authentic else ('SUSPECTED_FRAUD' if fraud_alerts else 'WARNING'),
+        'overall_status': overall_status,
         'match_score': match_score,
+        'different_cards_detected': different_cards_detected,
+        'is_valid_pair': not different_cards_detected,
         'checks': checks,
         'fraud_alerts': fraud_alerts,
         'warnings': warnings,
@@ -1532,9 +1591,16 @@ def merge_id_card_sides(
 
     success = bool(citizen_profile.get('document_number') or citizen_profile.get('surname') or citizen_profile.get('personal_number'))
 
+    error_msg = None
+    if different_cards_detected:
+        error_msg = f"Yuklangan rasmlar ikki xil ID kartalarga tegishli! ({'; '.join(mismatch_reasons)})"
+    elif not success:
+        error_msg = "ID karta ma'lumotlarini o'qishda xatolik yuz berdi"
+
     return {
         'success': success,
         'document_type': 'ID_CARD',
+        'different_cards_detected': different_cards_detected,
         'citizen_profile': citizen_profile,
         'validation': validation_summary,
         'face': face_data,
@@ -1544,7 +1610,7 @@ def merge_id_card_sides(
         'front_side': front_res,
         'back_side': back_res,
         'processing_time_ms': round((time.time() - t_start) * 1000, 1),
-        'error': None if success else "ID karta ma'lumotlarini o'qishda xatolik yuz berdi"
+        'error': error_msg
     }
 
 

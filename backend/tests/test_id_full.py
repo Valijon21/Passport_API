@@ -133,3 +133,12 @@ class TestIDCardFullOCR(TestCase):
         self.assertEqual(val['overall_status'], 'SUSPECTED_FRAUD')
         self.assertGreater(len(val['fraud_alerts']), 0)
         self.assertEqual(val['checks']['document_number_match']['status'], 'MISMATCH')
+
+        # Critical FinTech Pairing Checks:
+        self.assertTrue(data.get('different_cards_detected'))
+        self.assertTrue(val.get('different_cards_detected'))
+        self.assertFalse(val.get('is_valid_pair'))
+        self.assertFalse(data['citizen_profile'].get('is_valid_pair'))
+        # Ensure back card's JSHSHIR (Turdiyev) is NOT grafted onto Card4 (Yuldashov)
+        self.assertNotEqual(data['citizen_profile'].get('personal_number'), '32704842120065')
+

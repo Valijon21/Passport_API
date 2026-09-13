@@ -68,6 +68,22 @@ class TestFaceEngine(unittest.TestCase):
         self.assertFalse(res['match'])
         self.assertIn('error', res)
 
+    def test_selfie_no_face_rejection(self):
+        """Blank or faceless image as selfie must be strictly rejected with clear error."""
+        from pathlib import Path
+        card4_path = Path(__file__).resolve().parent.parent.parent / "pasport_img" / "card4.jpg"
+        if not card4_path.exists():
+            self.skipTest("card4.jpg not found")
+        with open(card4_path, 'rb') as f_doc:
+            doc_bytes = f_doc.read()
+        _, blank_encoded = cv2.imencode('.jpg', self.blank_img)
+        res = verify_kyc_selfie(doc_bytes, blank_encoded.tobytes())
+        self.assertFalse(res['success'])
+        self.assertFalse(res['match'])
+        self.assertEqual(res['verdict'], 'MISMATCH')
+        self.assertIn("selfie rasmida yuz aniqlanmadi", res['error'].lower())
+
 
 if __name__ == '__main__':
     unittest.main()
+

@@ -547,13 +547,58 @@ function renderIDFullResult(data) {
   renderConfidence(data.confidence, data.processing_time_ms);
   renderFaceCrop(data.face);
 
+  const isDifferentCards = !!(data.different_cards_detected || data.validation?.different_cards_detected || (!data.validation?.is_authentic && data.validation?.overall_status === 'SUSPECTED_FRAUD'));
+
+  // Auto-Swap banner
   const swapBanner = document.getElementById('autoSwapBanner');
   if (swapBanner) {
-    swapBanner.style.display = data.auto_swapped ? 'flex' : 'none';
+    swapBanner.style.display = (data.auto_swapped && !isDifferentCards) ? 'flex' : 'none';
   }
 
-  // Render unified citizen profile
-  renderStructuredFields(data.citizen_profile || {});
+  // Different cards mismatch banner
+  const diffBanner = document.getElementById('differentCardsBanner');
+  const diffMsg = document.getElementById('differentCardsMsg');
+  if (diffBanner) {
+    if (isDifferentCards) {
+      diffBanner.style.display = 'flex';
+      const alerts = (data.validation?.fraud_alerts || []).filter(a => a.includes('har xil') || a.includes('mos kelmadi') || a.includes('ikki xil'));
+      if (alerts.length && diffMsg) {
+        diffMsg.innerHTML = `
+          <strong>DIQQAT:</strong> Siz yuklagan old va orqa tomon rasmlari bir xil ID kartaga tegishli emas!<br>
+          <span style="color:rgba(255,255,255,0.9);font-size:12px;margin-top:6px;display:block;">
+            ${alerts.map(a => escapeHtml(a)).join('<br>')}
+          </span>
+          <span style="display:block;margin-top:8px;color:#ff7979;font-weight:600;">
+            ⚠️ FinTech xavfsizlik talablariga muvofiq, ikki xil shaxs ma'lumotlarini soxta birlashtirish rad etildi.
+          </span>
+        `;
+      }
+    } else {
+      diffBanner.style.display = 'none';
+    }
+  }
+
+  // Render unified citizen profile or mismatch warning
+  if (isDifferentCards) {
+    const grid = document.getElementById('fieldsGrid');
+    if (grid) {
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;padding:24px;background:rgba(235,77,75,0.08);border:1.5px dashed #eb4d4b;border-radius:var(--radius-sm);text-align:center;">
+          <div style="font-size:36px;margin-bottom:10px;">🚨</div>
+          <h4 style="color:#ff7979;margin-bottom:8px;font-size:16px;">Birlashtirilgan Profil Yaratilmadi</h4>
+          <p style="color:var(--text);font-size:13px;max-width:580px;margin:0 auto 16px;line-height:1.6">
+            Yuklangan ID kartaning old tomonidagi shaxs bilan orqa tomonidagi JSHSHIR egasi <strong>ikki xil inson</strong> deb aniqlandi.
+            Bir insonning ism-sharifiga boshqa insonning JSHSHIR va berilgan ma'lumotlarini qo'shish soxtalashtirish deb baholandi.
+          </p>
+          <button type="button" class="btn-goto-validation" onclick="switchTabByName('validation')">
+            🛡️ Qaysi maydonlar mos kelmaganini ko'rish (Anti-Fraud Jadvali)
+          </button>
+        </div>
+      `;
+    }
+  } else {
+    renderStructuredFields(data.citizen_profile || {});
+  }
 
   // Raw text combining both sides
   const frontRaw = data.front_side?.raw_text || '';
@@ -565,10 +610,16 @@ function renderIDFullResult(data) {
   renderValidation(data.validation);
   renderDebug(data);
   showResults();
-  switchTabByName('structured');
 
-  if (!data.success) {
-    log(`Birlashtirishda kamchilik: ${data.error}`, LEVELS.WARN);
+  if (isDifferentCards) {
+    // Automatically switch to Validation & Anti-Fraud tab so user immediately sees the mismatch table
+    switchTabByName('validation');
+    log("🚨 XATOLIK: Old va orqa tomonlar ikki xil ID kartalarga tegishli! Birlashtirish rad etildi.", LEVELS.ERROR);
+  } else {
+    switchTabByName('structured');
+    if (!data.success) {
+      log(`Birlashtirishda kamchilik: ${data.error}`, LEVELS.WARN);
+    }
   }
 }
 
@@ -1486,6 +1537,236 @@ function switchKYCMode(mode) {
   }
 }
 
+// ── Real-Time Face Alignment Tracker (KYC Camera) ─────────────
+let faceTrackerId = null;
+let lastFaceQualityState = {
+  hasFace: false,
+  isCentered: false,
+  isFullFace: false,
+  isTooClose: false,
+  isTooFar: false,
+  steadyFrames: 0
+};
+let offscreenTrackerCanvas = null;
+let offscreenTrackerCtx = null;
+let browserFaceDetector = null;
+
+try {
+  if (typeof window.FaceDetector === 'function') {
+    browserFaceDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+  }
+} catch (e) {
+  browserFaceDetector = null;
+}
+
+function startFaceGuideTracker() {
+  stopFaceGuideTracker();
+
+  if (!offscreenTrackerCanvas) {
+    offscreenTrackerCanvas = document.createElement('canvas');
+    offscreenTrackerCanvas.width = 160;
+    offscreenTrackerCanvas.height = 120;
+    offscreenTrackerCtx = offscreenTrackerCanvas.getContext('2d', { willReadFrequently: true, alpha: false });
+  }
+
+  const video = document.getElementById('kycVideo');
+  if (!video) return;
+
+  const checkIntervalMs = 90;
+  let isChecking = false;
+
+  faceTrackerId = setInterval(async () => {
+    if (isChecking || !video || video.paused || video.ended || !video.videoWidth) return;
+    isChecking = true;
+
+    try {
+      offscreenTrackerCtx.drawImage(video, 0, 0, 160, 120);
+
+      let hasFace = false;
+      let isCentered = false;
+      let isFullFace = false;
+      let isTooClose = false;
+      let isTooFar = false;
+
+      // Method 1: Hardware-accelerated browser FaceDetector (Chromium/Android)
+      if (browserFaceDetector) {
+        try {
+          const faces = await browserFaceDetector.detect(offscreenTrackerCanvas);
+          if (faces && faces.length > 0) {
+            hasFace = true;
+            const b = faces[0].boundingBox;
+            const cx = (b.x + b.width / 2) / 160;
+            const cy = (b.y + b.height / 2) / 120;
+            const wRatio = b.width / 160;
+            const isClipped = (b.x <= 2 || b.y <= 2 || (b.x + b.width) >= 158 || (b.y + b.height) >= 118);
+
+            isFullFace = !isClipped;
+            isCentered = Math.abs(cx - 0.50) < 0.15 && Math.abs(cy - 0.45) < 0.16;
+            isTooFar = wRatio < 0.20;
+            isTooClose = wRatio > 0.65;
+          }
+        } catch (detErr) {
+          // Fall back to canvas chrominance
+        }
+      }
+
+      // Method 2: High-speed Canvas Skin-Chrominance & Feature Contrast Fallback
+      if (!hasFace) {
+        const imgData = offscreenTrackerCtx.getImageData(0, 0, 160, 120);
+        const d = imgData.data;
+
+        let ovalSkinCount = 0;
+        let leftSkinCount = 0;
+        let rightSkinCount = 0;
+        let borderSkinCount = 0;
+        let lumSum = 0;
+        let lumSqSum = 0;
+        let sampleCount = 0;
+
+        for (let y = 0; y < 120; y += 2) {
+          for (let x = 0; x < 160; x += 2) {
+            const idx = (y * 160 + x) * 4;
+            const r = d[idx];
+            const g = d[idx + 1];
+            const b = d[idx + 2];
+
+            // Skin chrominance rule (daylight human skin range)
+            const isSkin = (r > 65 && g > 40 && b > 25 && r > g && r > b && (r - g) > 12 && (r - b) > 15);
+
+            // Border pixels (to detect severe boundary clipping)
+            const isBorder = (x <= 4 || x >= 156 || y <= 4 || y >= 116);
+            if (isBorder && isSkin) {
+              borderSkinCount++;
+            }
+
+            // Oval zone: center region
+            const inOval = (x >= 40 && x <= 120 && y >= 20 && y <= 100);
+            if (inOval) {
+              sampleCount++;
+              const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+              lumSum += lum;
+              lumSqSum += lum * lum;
+
+              if (isSkin) {
+                ovalSkinCount++;
+                if (x < 80) leftSkinCount++;
+                else rightSkinCount++;
+              }
+            }
+          }
+        }
+
+        const skinDensity = sampleCount > 0 ? (ovalSkinCount / sampleCount) : 0;
+        const meanLum = sampleCount > 0 ? (lumSum / sampleCount) : 0;
+        const variance = sampleCount > 0 ? (lumSqSum / sampleCount - meanLum * meanLum) : 0;
+        const stdDev = Math.sqrt(Math.max(0, variance));
+
+        if (skinDensity > 0.26 && stdDev > 15.0) {
+          hasFace = true;
+          const balance = (leftSkinCount + 1) / (rightSkinCount + 1);
+          isCentered = balance >= 0.50 && balance <= 1.90;
+          isTooClose = borderSkinCount > 18 || skinDensity > 0.85;
+          isTooFar = skinDensity < 0.30;
+          isFullFace = !isTooClose && borderSkinCount <= 12;
+        }
+      }
+
+      lastFaceQualityState.hasFace = hasFace;
+      lastFaceQualityState.isCentered = isCentered;
+      lastFaceQualityState.isFullFace = isFullFace;
+      lastFaceQualityState.isTooClose = isTooClose;
+      lastFaceQualityState.isTooFar = isTooFar;
+
+      updateFaceGuideUI(lastFaceQualityState);
+
+    } catch (loopErr) {
+      console.warn('Face guide tracker loop error:', loopErr);
+    } finally {
+      isChecking = false;
+    }
+  }, checkIntervalMs);
+}
+
+function stopFaceGuideTracker() {
+  if (faceTrackerId) {
+    clearInterval(faceTrackerId);
+    faceTrackerId = null;
+  }
+}
+
+function updateFaceGuideUI(qState) {
+  const oval = document.getElementById('kycOvalGuide');
+  const statusText = document.getElementById('ovalStatusText');
+  const statusDot = document.querySelector('.oval-status-dot');
+  const caption = document.getElementById('kycGuideCaption');
+  const hint = document.getElementById('kycShutterHint');
+  const btnShutter = document.getElementById('btnShutter');
+
+  if (!oval || !statusText) return;
+
+  if (!qState.hasFace) {
+    qState.steadyFrames = 0;
+    oval.className = 'oval-guide no-face';
+    statusText.textContent = 'Yuz qidirilmoqda...';
+    if (statusDot) statusDot.className = 'oval-status-dot';
+    if (caption) caption.textContent = "Yuzingizni doira markaziga to'g'rilang";
+    if (hint) {
+      hint.textContent = '⚠️ Yuz aniqlanmadi';
+      hint.className = 'shutter-hint hint-warn';
+    }
+    if (btnShutter) btnShutter.classList.remove('shutter-ready');
+    return;
+  }
+
+  // Face is present, check alignment and boundaries
+  if (!qState.isFullFace || qState.isTooClose) {
+    qState.steadyFrames = 0;
+    oval.className = 'oval-guide adjust-face';
+    statusText.textContent = "To'liq tushmadi";
+    if (statusDot) statusDot.className = 'oval-status-dot dot-adjust';
+    if (caption) caption.textContent = "Biroz uzoqlashing (yuzingiz kesilmasin)";
+    if (hint) {
+      hint.textContent = "⚠️ Yuz to'liq tushmadi (kesilgan)";
+      hint.className = 'shutter-hint hint-warn';
+    }
+    if (btnShutter) btnShutter.classList.remove('shutter-ready');
+  } else if (qState.isTooFar) {
+    qState.steadyFrames = 0;
+    oval.className = 'oval-guide adjust-face';
+    statusText.textContent = 'Yaqinroq keling';
+    if (statusDot) statusDot.className = 'oval-status-dot dot-adjust';
+    if (caption) caption.textContent = 'Kameraga biroz yaqinroq keling';
+    if (hint) {
+      hint.textContent = '⚠️ Yuz juda uzoqda';
+      hint.className = 'shutter-hint hint-warn';
+    }
+    if (btnShutter) btnShutter.classList.remove('shutter-ready');
+  } else if (!qState.isCentered) {
+    qState.steadyFrames = 0;
+    oval.className = 'oval-guide adjust-face';
+    statusText.textContent = 'Markazga suring';
+    if (statusDot) statusDot.className = 'oval-status-dot dot-adjust';
+    if (caption) caption.textContent = "Yuzingizni doira markaziga to'g'rilang";
+    if (hint) {
+      hint.textContent = '⚠️ Yuz markazda emas';
+      hint.className = 'shutter-hint hint-warn';
+    }
+    if (btnShutter) btnShutter.classList.remove('shutter-ready');
+  } else {
+    // Face is centered and fully in frame!
+    qState.steadyFrames = (qState.steadyFrames || 0) + 1;
+    oval.className = 'oval-guide face-ready';
+    statusText.textContent = '✓ Yuz aniqlandi';
+    if (statusDot) statusDot.className = 'oval-status-dot dot-ready';
+    if (caption) caption.textContent = '✓ Ajoyib! Qimirlamang';
+    if (hint) {
+      hint.textContent = '✓ Suratga olishga tayyor';
+      hint.className = 'shutter-hint hint-ready';
+    }
+    if (btnShutter) btnShutter.classList.add('shutter-ready');
+  }
+}
+
 async function startKYCCamera() {
   if (isCameraStarting) return;
   isCameraStarting = true;
@@ -1566,6 +1847,8 @@ async function startKYCCamera() {
           status.textContent = `● Jonli efir (${facingText})`;
           status.className = 'kyc-photo-status text-ok';
         }
+        // Start Real-Time Face Alignment Tracking Loop
+        startFaceGuideTracker();
       };
 
       // Direct play call as well
@@ -1600,6 +1883,7 @@ async function startKYCCamera() {
 }
 
 function stopKYCCamera() {
+  stopFaceGuideTracker();
   if (kycStream) {
     kycStream.getTracks().forEach(track => {
       try { track.stop(); } catch (e) {}
@@ -1630,6 +1914,20 @@ function captureKYCSnapshot() {
   if (!video || !video.videoWidth || video.videoWidth === 0) {
     showError('Kamera tayyor emas', 'Kamera hali to\'liq yuklanmadi. 1 soniya kuting yoki qaytadan yoqing.');
     return;
+  }
+
+  // Pre-Capture Face Quality Gate: Ensure real face is present and fully visible
+  if (video && video.videoWidth > 0) {
+    if (!lastFaceQualityState.hasFace) {
+      showError("Yuz aniqlanmadi", "Kamerada yuz aniqlanmadi. Iltimos, yuzingizni doira markaziga to'g'ri tutib suratga oling.");
+      if (btnShutter) btnShutter.disabled = false;
+      return;
+    }
+    if (!lastFaceQualityState.isFullFace || lastFaceQualityState.isTooClose) {
+      showError("Yuz to'liq tushmadi", "Yuzingiz kameraga to'liq tushmadi (chekkalari kesilib qolgan yoki juda yaqin). Iltimos, biroz orqaroq surilib qaytadan oling.");
+      if (btnShutter) btnShutter.disabled = false;
+      return;
+    }
   }
 
   // Prevent multiple rapid clicks during capture
@@ -1683,6 +1981,8 @@ function captureKYCSnapshot() {
       return;
     }
 
+    stopFaceGuideTracker();
+
     // Clean up previous blob URL to prevent memory leaks
     if (currentSnapshotUrl) {
       try { URL.revokeObjectURL(currentSnapshotUrl); } catch (e) {}
@@ -1706,6 +2006,8 @@ function captureKYCSnapshot() {
       btnRun.disabled = false;
       btnRun.classList.add('btn-pulse');
     }
+    const snapBadge = document.getElementById('snapBadgeText');
+    if (snapBadge) snapBadge.textContent = "✓ To'liq biometrik yuz olindi";
     if (status) {
       status.textContent = '✓ Jonli biometrik selfie olindi';
       status.className = 'kyc-photo-status text-ok';
@@ -1717,6 +2019,7 @@ function captureKYCSnapshot() {
     setTimeout(() => stopKYCCamera(), 60);
   }, 'image/jpeg', 0.88);
 }
+
 
 function retakeKYCSnapshot() {
   const snapOverlay = document.getElementById('snapshotOverlay');

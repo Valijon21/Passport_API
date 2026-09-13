@@ -174,10 +174,17 @@ def detect_and_crop_face(
         }
 
     b64_str = _encode_bgr_to_base64_jpeg(face_crop)
+    face_area_ratio = (fw * fh) / float(w * h) if (w * h > 0) else 0.0
+    is_cut_off = bool(x <= 4 or y <= 4 or (x + fw) >= (w - 4) or (y + fh) >= (h - 4))
+    is_well_framed = not is_cut_off and (0.05 <= face_area_ratio <= 0.85)
 
     return {
         'detected': True,
         'box': {'x': int(crop_x1), 'y': int(crop_y1), 'w': int(crop_x2 - crop_x1), 'h': int(crop_y2 - crop_y1)},
+        'raw_face_box': {'x': int(x), 'y': int(y), 'w': int(fw), 'h': int(fh)},
+        'is_cut_off': is_cut_off,
+        'face_coverage_ratio': round(face_area_ratio, 3),
+        'is_well_framed': is_well_framed,
         'image_base64': b64_str,
         'cropped_bgr': face_crop,
         'confidence': float(conf)
@@ -444,53 +451,40 @@ def verify_kyc_selfie(
     # 2. Detect face on selfie
     selfie_face_res = detect_and_crop_face(selfie_img, pad_ratio=0.20)
     if not selfie_face_res['detected']:
-        sh, sw = selfie_img.shape[:2]
-        # Only use central fallback if the image is portrait/selfie shaped, NOT a landscape document
-        is_portrait = sh >= (sw * 0.8) and sw >= 150 and sh >= 150
-        if is_portrait:
-            crop_w = int(sw * 0.65)
-            crop_h = int(sh * 0.75)
-            cx1 = max(0, (sw - crop_w) // 2)
-            cy1 = max(0, int(sh * 0.08))
-            cx2 = min(sw, cx1 + crop_w)
-            cy2 = min(sh, cy1 + crop_h)
-            fallback_crop = selfie_img[cy1:cy2, cx1:cx2]
-            if fallback_crop is not None and fallback_crop.size > 0:
-                selfie_face_res = {
-                    'detected': True,
-                    'box': {'x': int(cx1), 'y': int(cy1), 'w': int(cx2 - cx1), 'h': int(cy2 - cy1)},
-                    'image_base64': _encode_bgr_to_base64_jpeg(fallback_crop),
-                    'cropped_bgr': fallback_crop,
-                    'confidence': 0.65
-                }
-            else:
-                return {
-                    'success': False,
-                    'match': False,
-                    'similarity_percentage': 0.0,
-                    'verdict': 'MISMATCH',
-                    'error': 'Selfie rasmida yuz aniqlanmadi (yuzingizni kameraga to\'g\'rilab suratga oling)',
-                    'document_face': {
-                        'detected': True,
-                        'image_base64': doc_face_res['image_base64'],
-                        'box': doc_face_res['box']
-                    },
-                    'selfie_face': {'detected': False, 'image_base64': None}
-                }
-        else:
-            return {
-                'success': False,
-                'match': False,
-                'similarity_percentage': 0.0,
-                'verdict': 'MISMATCH',
-                'error': 'Selfie rasmida yuz aniqlanmadi (aniqroq suratga oling)',
-                'document_face': {
-                    'detected': True,
-                    'image_base64': doc_face_res['image_base64'],
-                    'box': doc_face_res['box']
-                },
-                'selfie_face': {'detected': False, 'image_base64': None}
+        return {
+            'success': False,
+            'match': False,
+            'similarity_percentage': 0.0,
+            'verdict': 'MISMATCH',
+            'error': "Selfie rasmida yuz aniqlanmadi. Iltimos, yuzingizni kameraga to'g'ri tutib suratga oling.",
+            'document_face': {
+                'detected': True,
+                'image_base64': doc_face_res['image_base64'],
+                'box': doc_face_res['box']
+            },
+            'selfie_face': {'detected': False, 'image_base64': None}
+        }
+
+    # Strict truncation / cut-off check: face cut off by camera boundaries
+    if selfie_face_res.get('is_cut_off') and selfie_face_res.get('face_coverage_ratio', 0) > 0.35:
+        return {
+            'success': False,
+            'match': False,
+            'similarity_percentage': 0.0,
+            'verdict': 'MISMATCH',
+            'error': "Selfie rasmida yuz to'liq tushmagan (kesilib qolgan). Iltimos, yuzingizni to'liq doira markaziga to'g'rilab qaytadan oling.",
+            'document_face': {
+                'detected': True,
+                'image_base64': doc_face_res['image_base64'],
+                'box': doc_face_res['box']
+            },
+            'selfie_face': {
+                'detected': True,
+                'image_base64': selfie_face_res['image_base64'],
+                'box': selfie_face_res['box'],
+                'is_cut_off': True
             }
+        }
 
     # 3. Compare faces
     comp_res = compare_faces(

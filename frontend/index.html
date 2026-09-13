@@ -328,6 +328,23 @@
         </div>
       </div>
 
+      <!-- Different Cards / Mismatch Alert Banner -->
+      <div class="different-cards-banner" id="differentCardsBanner" style="display:none">
+        <div class="diff-card-icon">🚨</div>
+        <div class="diff-card-content">
+          <div class="diff-card-title">XATOLIK / QALBAKILIK: TURLI XIL ID KARTALAR ANIQLANDI!</div>
+          <div class="diff-card-msg" id="differentCardsMsg">
+            Yuklangan old tomon va orqa tomon rasmlari ikki xil shaxs yoki ikki xil ID kartaga tegishli.
+            Soxta birlashtirish xavfsizlik nuqtai nazaridan rad etildi!
+          </div>
+          <div class="diff-card-btn-wrap">
+            <button type="button" class="btn-goto-validation" onclick="switchTabByName('validation')">
+              🛡️ Muvofiqlik Tafsilotlarini Ko'rish
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab active" data-tab="structured" onclick="switchTab(this,'structured')">
@@ -472,9 +489,13 @@
               </button>
             </div>
             
-            <!-- Biometric Oval Face Guide -->
+            <!-- Biometric Oval Face Guide with Real-Time Face Alignment Tracking -->
             <div class="camera-face-guide" id="cameraGuide" style="display:none">
-              <div class="oval-guide">
+              <div class="oval-guide" id="kycOvalGuide">
+                <div class="oval-status-pill" id="ovalStatusPill">
+                  <span class="oval-status-dot"></span>
+                  <span id="ovalStatusText">Yuz qidirilmoqda...</span>
+                </div>
                 <div class="scanner-line"></div>
               </div>
               <div class="guide-caption" id="kycGuideCaption">Yuzingizni doira markaziga to'g'rilang</div>
@@ -497,9 +518,12 @@
 
             <!-- Bottom Floating Shutter Controls -->
             <div class="camera-shutter-bar" id="cameraShutterBar" style="display:none">
-              <button type="button" class="btn-shutter" id="btnShutter" onclick="captureKYCSnapshot()" title="Suratga olish">
-                <span class="shutter-inner">📸</span>
-              </button>
+              <div class="shutter-control-wrap">
+                <button type="button" class="btn-shutter" id="btnShutter" onclick="captureKYCSnapshot()" title="Suratga olish">
+                  <span class="shutter-inner">📸</span>
+                </button>
+                <div class="shutter-hint" id="kycShutterHint">Yuz to'liq doira ichida bo'lishi shart</div>
+              </div>
             </div>
 
             <!-- Flash effect on snap -->
@@ -509,7 +533,7 @@
             <div class="snapshot-overlay" id="snapshotOverlay" style="display:none">
               <img id="kycSnapshotImg" src="" alt="Snapshot" class="kyc-snapshot-preview">
               <div class="snapshot-badge-bar">
-                <span class="snap-badge">✓ Rasm olindi</span>
+                <span class="snap-badge" id="snapBadgeText">✓ Rasm olindi</span>
                 <button type="button" class="btn-retake-action" onclick="retakeKYCSnapshot()">
                   🔄 Qayta tushirish
                 </button>

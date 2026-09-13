@@ -2416,5 +2416,190 @@ body {
   gap: 6px;
 }
 
+/* ══════════════════════════════════════════════════════════════
+   TWO-SIDED MISMATCH / FRAUD BANNER
+   ══════════════════════════════════════════════════════════════ */
+.different-cards-banner {
+  background: linear-gradient(135deg, rgba(235, 77, 75, 0.15), rgba(235, 77, 75, 0.06));
+  border: 1.5px solid #eb4d4b;
+  border-radius: var(--radius-sm);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  box-shadow: 0 4px 20px rgba(235, 77, 75, 0.25);
+  animation: pulseDanger 2.5s infinite;
+}
+
+@keyframes pulseDanger {
+  0%, 100% { border-color: #eb4d4b; box-shadow: 0 4px 20px rgba(235, 77, 75, 0.2); }
+  50% { border-color: #ff7979; box-shadow: 0 4px 30px rgba(235, 77, 75, 0.4); }
+}
+
+.diff-card-icon {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+  animation: shakeAlert 1.5s infinite ease-in-out;
+}
+
+@keyframes shakeAlert {
+  0%, 100% { transform: rotate(0deg); }
+  10%, 30% { transform: rotate(-8deg); }
+  20%, 40% { transform: rotate(8deg); }
+  50% { transform: rotate(0deg); }
+}
+
+.diff-card-content {
+  flex: 1;
+}
+
+.diff-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ff7979;
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+
+.diff-card-msg {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.btn-goto-validation {
+  background: rgba(235, 77, 75, 0.25);
+  border: 1px solid #eb4d4b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-goto-validation:hover {
+  background: #eb4d4b;
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   REAL-TIME FACE GUIDE TRACKER STYLES (KYC CAMERA)
+   ══════════════════════════════════════════════════════════════ */
+.oval-guide.no-face {
+  border-color: rgba(235, 77, 75, 0.85);
+  border-style: dashed;
+  animation: pulseRedOval 1.8s infinite ease-in-out;
+}
+
+.oval-guide.adjust-face {
+  border-color: rgba(240, 147, 43, 0.9);
+  border-style: dashed;
+  animation: pulseOrangeOval 1.8s infinite ease-in-out;
+}
+
+.oval-guide.face-ready {
+  border-color: #2ed573;
+  border-style: solid;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45), 0 0 24px rgba(46, 213, 115, 0.6);
+  animation: pulseGreenOval 2s infinite ease-in-out;
+}
+
+@keyframes pulseRedOval {
+  0%, 100% { border-color: rgba(235, 77, 75, 0.6); }
+  50% { border-color: rgba(235, 77, 75, 1); }
+}
+
+@keyframes pulseOrangeOval {
+  0%, 100% { border-color: rgba(240, 147, 43, 0.6); }
+  50% { border-color: rgba(240, 147, 43, 1); }
+}
+
+@keyframes pulseGreenOval {
+  0%, 100% { border-color: rgba(46, 213, 115, 0.8); }
+  50% { border-color: #2ed573; }
+}
+
+.oval-status-pill {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.oval-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #eb4d4b;
+}
+
+.oval-status-dot.dot-ready {
+  background: #2ed573;
+  box-shadow: 0 0 6px #2ed573;
+}
+
+.oval-status-dot.dot-adjust {
+  background: #f0932b;
+}
+
+.shutter-control-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.shutter-hint {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.65);
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  transition: all 0.2s;
+}
+
+.shutter-hint.hint-ready {
+  color: #2ed573;
+  background: rgba(46, 213, 115, 0.15);
+  border: 1px solid rgba(46, 213, 115, 0.3);
+}
+
+.shutter-hint.hint-warn {
+  color: #f0932b;
+  background: rgba(240, 147, 43, 0.15);
+  border: 1px solid rgba(240, 147, 43, 0.3);
+}
+
+.btn-shutter.shutter-ready {
+  border-color: #2ed573;
+  background: rgba(46, 213, 115, 0.25);
+  box-shadow: 0 0 20px rgba(46, 213, 115, 0.5);
+}
+
 
 

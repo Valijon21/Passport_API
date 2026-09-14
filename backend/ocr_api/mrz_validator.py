@@ -185,13 +185,22 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
     if 'TD3' in fmt or len(lines) >= 2:
         td3_line2 = None
         for l in lines:
-            if len(l) >= 35 and bool(re.match(r'^[A-Z0-9<]{35,44}$', l)):
-                # Passport Line 2 starts with doc number (e.g. AB8090975)
-                if re.match(r'^[A-Z]{2}\d{7}', l):
+            if len(l) >= 30 and bool(re.match(r'^[A-Z0-9<]{30,44}$', l)):
+                # Passport Line 2 starts with doc number or contains UZB anchor with birth date
+                if re.match(r'^[A-Z]{2}\d{7}', l) or ('UZB' in l and bool(re.search(r'\d{6}', l))):
                     td3_line2 = l
                     break
 
         if td3_line2:
+            # If td3_line2 had the initial letter trimmed (e.g. B70480240UZB...), align using mrz_data doc_num
+            target_doc = mrz_data.get('document_number') if mrz_data else None
+            if target_doc and len(target_doc) == 9 and not td3_line2.startswith(target_doc):
+                if td3_line2.startswith(target_doc[1:]):
+                    td3_line2 = target_doc[0] + td3_line2
+            elif 'UZB' in td3_line2 and td3_line2.find('UZB') == 9 and len(td3_line2) == 43:
+                prefix = target_doc[0] if (target_doc and len(target_doc) == 9) else 'A'
+                td3_line2 = prefix + td3_line2
+
             l2 = td3_line2.ljust(44, '<')
 
             # 1. Document Number Checksum (chars 0:9, check digit at 9)

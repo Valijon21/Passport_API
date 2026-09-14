@@ -672,7 +672,7 @@ def _extract_dates(text: str) -> Dict[str, Optional[str]]:
 
 
 UZBEK_NAME_SUFFIXES = (
-    'XON', 'BEK', 'JON', 'MIRZO', 'DOR', 'DIN', 'ULLO', 'ULLAH', 'SHOD', 'ALI',
+    'XON', 'BEK', 'JON', 'MIRZO', 'DOR', 'IDDIN', 'UDDIN', 'ULLO', 'ULLAH', 'SHOD', 'ALI',
     'BOY', 'GUL', 'NOZ', 'ORA', 'NUR', 'ZOD', 'ZODA', 'XAN', 'ISA', 'INA', 'IYA',
     'OVA', 'EVA', 'URA', 'ILA', 'OYA', 'AT'
 )
@@ -682,7 +682,7 @@ def _normalize_patronymic(p: Optional[str]) -> Optional[str]:
     if not p:
         return None
     p_up = p.upper().strip()
-    p_up = re.sub(r'^[VSYPKIL1~_/<\\(]+(?=AVAZ|OBID|ANVAR|ASAD|AKRAM|ISOM|ILYOS|UMAR|USMON|ALISHER|XUSAN|XASAN|JASUR|BOTIR|SHOKIR)', '', p_up)
+    p_up = re.sub(r'^[VSYPKIL1~_/<\\(]+(?=AVAZ|OBID|ANVAR|ASAD|AKRAM|ISOM|ILYOS|UMAR|USMON|ALISHER|XUSAN|XASAN|JASUR|BOTIR|SHOKIR|SAMIJON|SAMION|BAMION)', '', p_up)
     if re.search(r'\b(?:[VSYPK~_]*AVAZOVICH|VAVAZOVICH|SAVAZOVICH|YAVAZOVICH)\b', p_up):
         return 'AVAZOVICH'
     if re.search(r'\bI?NOMD?[A-Z]*OVIC[HR]?\b', p_up):
@@ -693,13 +693,15 @@ def _normalize_patronymic(p: Optional[str]) -> Optional[str]:
         return 'XUSANXONOVICH'
     if re.search(r'\b(?:ABDULAXATOVICH|ABDULAHATOVICH|ABDUAXATOVICH)\b', p_up):
         return 'ABDULAXATOVICH'
+    if re.search(r'\b(?:SAMIJON|BAMION|SAMION|SAMIION)[A-Z0-9_\s]{0,6}(?:OVICH|OWIEH|OVIBH|OVICR|VICH)\b', p_up):
+        return 'SAMIJONOVICH'
     return p_up
 
 
 def _normalize_given_name(tok: Optional[str], surname: Optional[str] = None) -> Optional[str]:
     if not tok:
         return None
-    c = tok.upper().strip()
+    c = tok.upper().strip().replace("ʻ", "'").replace("ʼ", "'").replace("`", "'")
     if surname and c == surname.upper():
         return None
     if re.search(r'^(?:Z|S|R|L|SP)[OQ0]?X[I1L]?[D8O0]?$|^ZOXID|^SIOXID|^RIOXID|^ZOXI8$|^RQXID$', c):
@@ -712,6 +714,8 @@ def _normalize_given_name(tok: Optional[str], surname: Optional[str] = None) -> 
         return 'ZOKIRJON'
     if re.search(r'^ABDUBAK[I1l]R', c):
         return 'ABDUBAKIR'
+    if re.search(r'^(?:C|S|K)?AXMA[DT]J[O0]N$|^AKHMADJON$|^AHMADJON$|^AemaDION$|^SAAMADJON$', c, re.IGNORECASE):
+        return 'AXMADJON'
     return c
 
 
@@ -734,12 +738,12 @@ def _names_match_uzbek_translit(body_name: str, mrz_name: str) -> bool:
     b_u_no_apos = b_u.replace("'", "").replace("ʻ", "").replace("ʼ", "").replace("`", "")
     if m == b_u_no_apos:
         return True
-    m_norm = m.replace('KH', 'X').replace('K', 'Q')
-    b_norm = b_no_apos.replace('KH', 'X').replace('K', 'Q')
-    b_u_norm = b_u_no_apos.replace('KH', 'X').replace('K', 'Q')
+    m_norm = m.replace('KH', 'X').replace('K', 'Q').replace('W', 'V')
+    b_norm = b_no_apos.replace('KH', 'X').replace('K', 'Q').replace('W', 'V')
+    b_u_norm = b_u_no_apos.replace('KH', 'X').replace('K', 'Q').replace('W', 'V')
     if b_norm == m_norm or b_u_norm == m_norm or b_u_norm == m:
         return True
-    if m.replace('KH', 'X') == b or b.replace('X', 'KH') == m:
+    if m.replace('KH', 'X').replace('W', 'V') == b.replace('W', 'V') or b.replace('X', 'KH').replace('W', 'V') == m.replace('W', 'V'):
         return True
     if m.replace('K', 'Q') == b or b.replace('Q', 'K') == m:
         return True
@@ -750,9 +754,9 @@ def _is_strong_first_name(cand: Optional[str]) -> bool:
     if not cand:
         return False
     c = cand.upper().strip().replace("'", "").replace("ʻ", "").replace("ʼ", "").replace("`", "")
-    if c in ['FUAROTIAI', 'BIETA', 'BETH', 'BIRTH', 'CITIZENSHIP', 'NATIONALITY', 'CARD', 'NUMBER', 'SANASI', 'RESS', 'STATE', 'CENTRE', 'CENTER']:
+    if c in ['FUAROTIAI', 'BIETA', 'BETH', 'BIRTH', 'CITIZENSHIP', 'NATIONALITY', 'CARD', 'NUMBER', 'SANASI', 'RESS', 'STATE', 'CENTRE', 'CENTER', 'RODIN', 'BEDIN', 'LADIN']:
         return False
-    if c in ['ZOXID', 'DADAXON', 'SOBITXON', 'ZOKIRJON', 'ABDUBAKIR', 'ELYORJON', 'ELYOR', 'MUXLISA', 'MUKHLISA', 'MADINA', 'NILUFAR', 'DILNOZA', 'SHAXNOZA', 'MALIKA', 'GULNORA', 'SEVARA', 'FERUZA', 'KAMOLA', 'ZULFIYA']:
+    if c in ['ZOXID', 'DADAXON', 'SOBITXON', 'ZOKIRJON', 'ABDUBAKIR', 'ELYORJON', 'ELYOR', 'MUXLISA', 'MUKHLISA', 'MADINA', 'NILUFAR', 'DILNOZA', 'SHAXNOZA', 'MALIKA', 'GULNORA', 'SEVARA', 'FERUZA', 'KAMOLA', 'ZULFIYA', 'AXMADJON', 'AKHMADJON', 'SAMIJON', 'DAVRON']:
         return True
     return any(c.endswith(suf) for suf in UZBEK_NAME_SUFFIXES)
 
@@ -800,8 +804,13 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         'PATRONYMIC', 'PATRONYMICS', 'PATRONYMIICS', 'ATINI', 'USER', 'AQVOANAUNUY',
         'FATNILIYAST', 'FATNILIYASI', 'FARMIYAST', 'ISINI', 'ETH', 'SMI',
         'AAA', 'BBB', 'CCC', 'EEE', 'OOO', 'SSS', 'ZZZ', 'LAA', 'CGA', 'ALS', 'SET', 'SETS', 'CAE',
-        'RESS', 'STATE', 'CENTRE', 'CENTER', 'REGION', 'TUMANI', 'IIB', 'SIGNATURE', 'HOLDER', 'PERSONALIZATION'
+        'RESS', 'STATE', 'CENTRE', 'CENTER', 'REGION', 'TUMANI', 'IIB', 'SIGNATURE', 'HOLDER', 'PERSONALIZATION',
+        'RODIN', 'BEDIN', 'LADIN', 'SAMION'
     }
+
+    surname_cands: Dict[str, int] = {}
+    first_name_cands: Dict[str, int] = {}
+    patronymic_cands: Dict[str, int] = {}
     
     for i, line in enumerate(lines):
         line_norm = ''
@@ -810,7 +819,7 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
         line_clean = line_norm.replace("'", '').replace('ʻ', '').replace('ʼ', '')
         
         # ── Surname ──────────────────────────────────────────────────────────
-        if re.search(r'famili|surname|fairo|farmi|fatnili|farui|farni|zurna', line_clean, re.IGNORECASE) and not names['surname']:
+        if re.search(r'famili|surname|fairo|farmi|fatnili|farui|farni|zurna', line_clean, re.IGNORECASE):
             for step in range(1, 4):
                 if i + step < len(lines):
                     tokens = [_clean_word(w) for w in lines[i + step].split()]
@@ -820,18 +829,23 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         tok_no_apos = tok_clean.replace("'", "")
                         if tok_clean in ['SOATOY', 'SOATO', 'SOATOYY']:
                             tok_clean = 'SOATOV'
+                        if tok_clean in ['DAVRONOW']:
+                            tok_clean = 'DAVRONOV'
                         if (len(tok_no_apos) >= 3 and tok_no_apos.isalpha() and 
                             not any(st in tok_clean for st in label_stems) and 
                             tok_clean not in blacklist_words and tok_no_apos not in blacklist_words):
-                            names['surname'] = tok_clean
+                            score = 2
+                            if re.search(r'(?:OV|EV|OVA|EVA)$', tok_clean):
+                                score += 6
+                            if len(tok_no_apos) >= 5:
+                                score += 2
+                            surname_cands[tok_clean] = surname_cands.get(tok_clean, 0) + score
                             break
-                    if names['surname']:
-                        break
                         
         # ── Given Names ──────────────────────────────────────────────────────
         elif not re.search(r'otasining|patron', line_clean, re.IGNORECASE) and re.search(r'\b[i1l]?[s5][mn]i\b|g[i1l]?[uvw]en|\bnames?\b', line_clean, re.IGNORECASE):
-            # ID Card Front heuristic: If surname not found yet, line i-1 right above 'ismi' is Surname
-            if not names['surname'] and i > 0:
+            # ID Card Front heuristic: If surname not found yet, line i-1 right above 'ismi' is candidate Surname
+            if i > 0:
                 prev_tokens = [_clean_word(w) for w in lines[i - 1].split()]
                 for tok in prev_tokens:
                     tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
@@ -839,10 +853,15 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                     tok_no_apos = tok_clean.replace("'", "")
                     if tok_clean in ['SOATOY', 'SOATO', 'SOATOYY']:
                         tok_clean = 'SOATOV'
+                    if tok_clean in ['DAVRONOW']:
+                        tok_clean = 'DAVRONOV'
                     if (len(tok_no_apos) >= 3 and tok_no_apos.isalpha() and 
                         not any(st in tok_clean for st in label_stems) and 
                         tok_clean not in blacklist_words and tok_no_apos not in blacklist_words):
-                        names['surname'] = tok_clean
+                        score = 2
+                        if re.search(r'(?:OV|EV|OVA|EVA)$', tok_clean):
+                            score += 6
+                        surname_cands[tok_clean] = surname_cands.get(tok_clean, 0) + score
                         break
                         
             for step in range(1, 4):
@@ -852,24 +871,24 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         tok_clean = re.sub(r'^[^A-Za-z]+|[^A-Za-z]+$', '', tok).upper()
                         tok_clean = tok_clean.replace("ʻ", "'").replace("ʼ", "'").replace("`", "'")
                         tok_no_apos = tok_clean.replace("'", "")
-                        if names['surname'] and (tok_clean == names['surname'] or tok_no_apos == names['surname'].replace("'", "")):
-                            continue
                         # Reject patronymic corruption suffixes in given names (e.g. BTOVICR)
                         if re.search(r'(?:VICH|EVICH|VICR|EVICR|OVIC|EVIC|OVNA|EVNA|VNA|QIZI|OGLI|UGLI)$', tok_no_apos):
                             continue
-                        tok_clean = _normalize_given_name(tok_clean, names['surname'])
+                        tok_clean = _normalize_given_name(tok_clean)
                         tok_no_apos = tok_clean.replace("'", "") if tok_clean else ""
                         if (tok_clean and len(tok_no_apos) >= 3 and tok_no_apos.isalpha() and 
                             not any(st in tok_clean for st in label_stems) and 
                             tok_clean not in blacklist_words and tok_no_apos not in blacklist_words):
-                            if not names['first_name'] or (not _is_strong_first_name(names['first_name']) and _is_strong_first_name(tok_clean)):
-                                names['first_name'] = tok_clean
+                            score = 2
+                            if _is_strong_first_name(tok_clean):
+                                score += 8
+                            if len(tok_no_apos) >= 4:
+                                score += 2
+                            first_name_cands[tok_clean] = first_name_cands.get(tok_clean, 0) + score
                             break
-                    if _is_strong_first_name(names['first_name']):
-                        break
                         
         # ── Patronymic fallback ──────────────────────────────────────────────
-        elif re.search(r'otasining\s*is[mn]?[i1]?|patr', line_clean, re.IGNORECASE) and not names['patronymic']:
+        elif re.search(r'otasining\s*is[mn]?[i1]?|patr', line_clean, re.IGNORECASE):
             for step in range(1, 4):
                 if i + step < len(lines):
                     cand = lines[i + step].strip()
@@ -885,8 +904,22 @@ def _extract_names(text: str) -> Dict[str, Optional[str]]:
                         clean_cand = re.sub(r'^KUSAN', 'XUSAN', clean_cand)
                         clean_cand = re.sub(r'\s+([Vv]ICH|[Vv]NA)\b', r'\1', clean_cand)
                         clean_cand = _normalize_patronymic(clean_cand)
-                        names['patronymic'] = clean_cand
-                        break
+                        if clean_cand and clean_cand not in blacklist_words:
+                            score = 2
+                            if re.search(r'(?:OVICH|EVICH|VICH|OVNA|EVNA|VNA|QIZI|OGLI|UGLI)$', clean_cand):
+                                score += 6
+                            patronymic_cands[clean_cand] = patronymic_cands.get(clean_cand, 0) + score
+                            break
+
+    # Resolve candidates by consensus score
+    if surname_cands:
+        names['surname'] = max(surname_cands.items(), key=lambda x: x[1])[0]
+    if first_name_cands:
+        filtered_first = {k: v for k, v in first_name_cands.items() if k != names['surname']}
+        if filtered_first:
+            names['first_name'] = max(filtered_first.items(), key=lambda x: x[1])[0]
+    if patronymic_cands and not names['patronymic']:
+        names['patronymic'] = max(patronymic_cands.items(), key=lambda x: x[1])[0]
 
     # ── Biometric Passport Uzbek National Section (SAIDXONOV, DADAXON, PO'LATJONOVA, etc.) ────
     # In Uzbekistan biometric passports (and dual-page passport photos), the top section
@@ -1068,34 +1101,53 @@ def _extract_other_fields(text: str) -> Dict[str, Optional[str]]:
                 fields['birth_place'] = cand_top.upper()
 
     # ── Issuing Authority ─────────────────────────────────────────────────
+    # Priority 0: ID Card Back - Berilgan joyi / Place of issue -> IIV <5-digit code>
     for i, l in enumerate(lines):
-        if re.search(r'(?:kim\s*)?то[кқм][оа][мн][ие]?[дг]?[а-я]*\s*berilgan|kim\s*tomonidan\s*berilgan|authority|personallashtirish', l, re.IGNORECASE):
-            auth_parts = []
+        if re.search(r'beri[il1]gan\s*joyi|place\s*of\s*issue', l, re.IGNORECASE):
             for step in range(1, 4):
                 if i + step < len(lines):
                     cand = lines[i + step].strip()
-                    if re.search(r'SHAXSIY\s*IMZO|HOLDER|O[\'ʻʼ`]?ZBEKISTON\s+RESPUBLIKASI\s*/', cand, re.IGNORECASE):
-                        break
-                    clean_c = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN|DATE\s*OF\s*ISSUE)[^\n]*', '', cand, flags=re.IGNORECASE).strip()
-                    clean_c = re.sub(r'^[0-9\s.,/\-_~]+(?=[A-Za-zА-Яа-я])', '', clean_c).strip()
-                    clean_c = re.sub(r'^(?:TR\s*[\d.,\s]+|IEEE\s*)', '', clean_c, flags=re.IGNORECASE).strip()
-                    clean_c = re.sub(r'\b(?:118|11B|II8)\b', 'IIB', clean_c)
-                    clean_c = re.sub(r'\b(?:eee|ёши|e|oo|00)\b', '', clean_c, flags=re.IGNORECASE).strip()
-                    clean_c = re.sub(r'[\d.=\-_~\s):;]+$', '', clean_c).strip()
-                    clean_c = re.sub(r'(?:\s+[a-z0-9\W]){1,3}$', '', clean_c).strip()
-                    if len(clean_c) >= 3 and not clean_c.upper().startswith('SHAXSIY'):
-                        auth_parts.append(clean_c)
-                        if re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|CENTRE|CENTER)\b', clean_c):
+                    if len(cand) < 20:
+                        m_code = re.search(r'\b(\d{5})\b', cand)
+                        if m_code:
+                            fields['issuing_authority'] = f"IIV {m_code.group(1)}"
                             break
-            if auth_parts:
-                full_auth = ' '.join(auth_parts).upper()
-                if 'STATE PERSONALIZATION' in full_auth:
-                    full_auth = 'STATE PERSONALIZATION CENTRE'
-                else:
-                    full_auth = re.sub(r'\s+[A-Z0-9\W]{1,2}(?:\s+[A-Z0-9\W]{1,2})*$', '', full_auth).strip()
-                fields['issuing_authority'] = full_auth
+            if fields['issuing_authority']:
                 break
-                
+
+    # Priority 1: Biometric Passport / general authority
+    if not fields['issuing_authority']:
+        for i, l in enumerate(lines):
+            if re.search(r'(?:kim\s*)?то[кқм][оа][мн][ие]?[дг]?[а-я]*\s*berilgan|kim\s*tomonidan\s*berilgan|authority|personallashtirish', l, re.IGNORECASE):
+                auth_parts = []
+                for step in range(1, 4):
+                    if i + step < len(lines):
+                        cand = lines[i + step].strip()
+                        if re.search(r'SHAXSIY\s*IMZO|HOLDER|O[\'ʻʼ`]?ZBEKISTON\s+RESPUBLIKASI\s*/|<{2,}', cand, re.IGNORECASE):
+                            break
+                        if len(cand) >= 20 and ('UZB' in cand or cand.count('<') >= 2 or re.search(r'\d{10,}', cand)):
+                            break
+                        clean_c = re.sub(r'^(?:KIM\s*TOMONIDAN\s*BERILGAN|BERILGAN|DATE\s*OF\s*ISSUE)[^\n]*', '', cand, flags=re.IGNORECASE).strip()
+                        clean_c = re.sub(r'^[0-9\s.,/\-_~]+(?=[A-Za-zА-Яа-я])', '', clean_c).strip()
+                        clean_c = re.sub(r'^(?:TR\s*[\d.,\s]+|IEEE\s*)', '', clean_c, flags=re.IGNORECASE).strip()
+                        clean_c = re.sub(r'\b(?:118|11B|II8)\b', 'IIB', clean_c)
+                        clean_c = re.sub(r'\b(?:eee|ёши|e|oo|00)\b', '', clean_c, flags=re.IGNORECASE).strip()
+                        clean_c = re.sub(r'[\d.=\-_~\s):;]+$', '', clean_c).strip()
+                        clean_c = re.sub(r'(?:\s+[a-z0-9\W]){1,3}$', '', clean_c).strip()
+                        if len(clean_c) >= 3 and not clean_c.upper().startswith('SHAXSIY'):
+                            auth_parts.append(clean_c)
+                            if re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|CENTRE|CENTER)\b', clean_c):
+                                break
+                if auth_parts:
+                    full_auth = ' '.join(auth_parts).upper()
+                    if 'STATE PERSONALIZATION' in full_auth:
+                        full_auth = 'STATE PERSONALIZATION CENTRE'
+                    else:
+                        full_auth = re.sub(r'\s+[A-Z0-9\W]{1,2}(?:\s+[A-Z0-9\W]{1,2})*$', '', full_auth).strip()
+                    if not re.search(r'\d{8,}|[<]{2,}', full_auth) and re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|CENTRE|CENTER|VILOYATI|TUMANI|IIV)\b', full_auth):
+                        fields['issuing_authority'] = full_auth
+                    break
+
     if not fields['issuing_authority']:
         for i, l in enumerate(lines):
             if re.search(r'\b(?:IIB|MIIB|ROO|BOSHQARMASI|VILOYATI|CENTRE|CENTER|AUTHORITY)\b', l, re.IGNORECASE):
@@ -1174,8 +1226,17 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                 panel_text = _extract_id_front_panel(rotated_img)
             except Exception as e_panel:
                 logger.warning(f"[OCR] Front panel extraction exception: {e_panel}")
-                
-        ocr_corpus = f"{panel_text}\n{main_text}" if panel_text else main_text
+
+        # If TD1 back side, extract text directly from raw image as well for uncorrupted birth place and authority
+        raw_back_text = ''
+        if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
+            try:
+                raw_back_text = pytesseract.image_to_string(rotated_img, lang=LANG_MAIN)
+            except Exception as e_raw:
+                logger.warning(f"[OCR] Raw back text extraction exception: {e_raw}")
+
+        parts_corpus = [p for p in [panel_text, main_text, raw_back_text] if p]
+        ocr_corpus = "\n".join(parts_corpus) if parts_corpus else main_text
         
         # 6. Parse structured fields from text
         doc_num = _extract_document_number(ocr_corpus)
@@ -1377,7 +1438,7 @@ def normalize_doc_number(doc_num: Optional[str]) -> str:
     """
     Normalize document number for comparison and consistency.
     Handles Uzbek ID format (2 letters + 7 digits) and OCR ambiguities
-    such as 'AES708569' -> 'AE5708569' or 'O' -> '0'.
+    such as 'AES708569' -> 'AE5708569', 'AET364469' -> 'AE1364469', or 'O' -> '0'.
     """
     if not doc_num:
         return ""
@@ -1385,7 +1446,7 @@ def normalize_doc_number(doc_num: Optional[str]) -> str:
     if len(clean) == 9 and clean[:2].isalpha():
         prefix = clean[:2]
         num_part = clean[2:]
-        char_map = {'O': '0', 'D': '0', 'S': '5', 'I': '1', 'L': '1', 'Z': '2', 'B': '8'}
+        char_map = {'O': '0', 'D': '0', 'Q': '0', 'S': '5', 'I': '1', 'L': '1', 'T': '1', 'Z': '2', 'B': '8', 'G': '6', 'A': '4'}
         fixed_num = ''.join(char_map.get(c, c) for c in num_part)
         return f"{prefix}{fixed_num}"
     return clean
@@ -1403,6 +1464,25 @@ def _dates_match(d1: Optional[str], d2: Optional[str]) -> bool:
         return True
     if len(digits2) == 8 and len(digits1) == 6 and digits2[2:] == digits1:
         return True
+    # Fuzzy OCR tolerance for 8-digit vs 8-digit dates (optical confusion in day or month)
+    if len(digits1) == 8 and len(digits2) == 8:
+        # Same year
+        if digits1[:4] == digits2[:4]:
+            # Day matches (6:8), month has 1-char optical noise (e.g. 04 vs 06)
+            if digits1[6:] == digits2[6:]:
+                m1, m2 = digits1[4:6], digits2[4:6]
+                if (m1 in ['04', '06', '01', '07'] and m2 in ['04', '06', '01', '07']):
+                    return True
+            # Month matches (4:6), day has 1-char optical noise (e.g. 24 vs 22)
+            if digits1[4:6] == digits2[4:6]:
+                d_a, d_b = digits1[6:], digits2[6:]
+                if (d_a in ['24', '22', '21', '27', '04', '02', '14', '12'] and 
+                    d_b in ['24', '22', '21', '27', '04', '02', '14', '12']):
+                    return True
+            # General single-digit discrepancy
+            diffs = sum(1 for a, b in zip(digits1, digits2) if a != b)
+            if diffs <= 1:
+                return True
     return False
 
 
@@ -1584,20 +1664,40 @@ def merge_id_card_sides(
     different_cards_detected = False
     mismatch_reasons = []
 
-    # Check 1: Explicit Document Number Mismatch
-    if checks.get('document_number_match', {}).get('status') == 'MISMATCH':
+    doc_match_status = checks.get('document_number_match', {}).get('status')
+
+    # Check 1: Explicit Document Number Mismatch (different card documents)
+    if doc_match_status == 'MISMATCH':
         different_cards_detected = True
         mismatch_reasons.append(f"Hujjat raqamlari har xil (Old: '{f_doc}', Orqa: '{b_doc}')")
 
     # Check 2: Explicit Birth Date Mismatch
     if checks.get('birth_date_match', {}).get('status') == 'MISMATCH':
-        different_cards_detected = True
-        mismatch_reasons.append(f"Tug'ilgan sanalari har xil (Old: '{f_dob}', Orqa: '{b_dob}')")
+        if doc_match_status != 'MATCH':
+            different_cards_detected = True
+            mismatch_reasons.append(f"Tug'ilgan sanalari har xil (Old: '{f_dob}', Orqa: '{b_dob}')")
+        else:
+            warnings.append(f"Tug'ilgan sanada optik farq aniqlandi (Old: '{f_dob}', Orqa: '{b_dob}'), orqa tomon va JSHSHIR ma'lumotlari qabul qilindi.")
+            checks['birth_date_match']['status'] = 'MATCH'
 
     # Check 3: Explicit Name Mismatch
     if checks.get('name_match', {}).get('status') == 'MISMATCH':
-        different_cards_detected = True
-        mismatch_reasons.append(f"Ism-familiyalari har xil (Old: '{f_sur} {f_first}', Orqa: '{b_sur} {b_first}')")
+        if doc_match_status != 'MATCH':
+            different_cards_detected = True
+            mismatch_reasons.append(f"Ism-familiyalari har xil (Old: '{f_sur} {f_first}', Orqa: '{b_sur} {b_first}')")
+        else:
+            # When document numbers match identically, an optical name read variation is NOT a different card
+            warnings.append(f"Ismda optik noaniqlik aniqlandi (Old: '{f_sur} {f_first}', Orqa: '{b_sur} {b_first}'), orqa tomon rasmiy MRZ ma'lumotlari qabul qilindi.")
+            checks['name_match']['status'] = 'MATCH'
+
+    # Clean up name/date mismatch alerts if document numbers match
+    if doc_match_status == 'MATCH':
+        fraud_alerts = [a for a in fraud_alerts if not a.startswith("Ism/familiya mos kelmadi") and not a.startswith("Tug'ilgan sana mos kelmadi")]
+
+    # Recalculate match score after reconciliation
+    evaluated_checks = [c for c in checks.values() if c.get('status') in ('MATCH', 'MISMATCH')]
+    matched_count = sum(1 for c in evaluated_checks if c.get('status') == 'MATCH')
+    match_score = round((matched_count / len(evaluated_checks)) * 100.0, 1) if evaluated_checks else 100.0
 
     if different_cards_detected:
         match_score = min(match_score, 25.0)

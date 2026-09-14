@@ -19,17 +19,26 @@ ICAO_WEIGHTS = [7, 3, 1]
 CONFUSION_MAP = {
     '0': ['O', 'Q', 'D', 'U'],
     'O': ['0', 'Q', 'D'],
-    '1': ['I', 'L', '|', 'T'],
-    'I': ['1', 'L', '|'],
+    'Q': ['0', 'O'],
+    'D': ['0', 'O'],
+    'U': ['0'],
+    '1': ['I', 'L', '|', 'T', '7'],
+    'I': ['1', 'L', '|', 'T'],
     'L': ['1', 'I'],
-    '2': ['Z'],
+    '|': ['1', 'I'],
+    'T': ['1', '7', 'I'],
+    '7': ['1', 'T'],
+    '2': ['Z', '4'],
     'Z': ['2'],
+    '4': ['2', 'A', '6'],
+    'A': ['4'],
     '5': ['S'],
     'S': ['5'],
     '8': ['B'],
     'B': ['8'],
-    '6': ['G', 'b'],
+    '6': ['G', 'b', '4', '0'],
     'G': ['6'],
+    'b': ['6'],
 }
 
 
@@ -75,16 +84,62 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
     if calculate_icao_check_digit(raw_field) == expected_digit:
         return raw_field, False
 
-    # Try single-character substitution
     field_chars = list(raw_field.upper())
-    for idx, ch in enumerate(field_chars):
+
+    # Special heuristic for Uzbek Doc Numbers: 2 letters + 7 digits (e.g. AET364469 -> AE1364469)
+    if len(field_chars) == 9 and field_chars[0].isalpha() and field_chars[1].isalpha():
+        letter_to_digit = {'T': '1', 'I': '1', 'L': '1', 'O': '0', 'D': '0', 'Z': '2', 'S': '5', 'B': '8', 'G': '6', 'A': '4'}
+        cand = list(field_chars)
+        changed = False
+        for idx in range(2, 9):
+            if cand[idx].isalpha() and cand[idx] in letter_to_digit:
+                cand[idx] = letter_to_digit[cand[idx]]
+                changed = True
+        if changed and calculate_icao_check_digit("".join(cand)) == expected_digit:
+            return "".join(cand), True
+
+    # Special heuristic for 6-digit Date fields (YYMMDD): all 6 chars must be digits
+    if len(field_chars) == 6 and any(c.isalpha() for c in field_chars):
+        letter_to_digit = {'O': '0', 'D': '0', 'B': '8', 'S': '5', 'Z': '2', 'I': '1', 'L': '1', 'T': '1', 'A': '4', 'G': '6'}
+        cand = [letter_to_digit.get(c, c) for c in field_chars]
+        cand_str = "".join(cand)
+        if cand_str.isdigit() and calculate_icao_check_digit(cand_str) == expected_digit:
+            return cand_str, True
+
+    # Try single-character substitution (prioritize non-digit positions)
+    indices = sorted(range(len(field_chars)), key=lambda idx: 0 if not field_chars[idx].isdigit() else 1)
+    for idx in indices:
+        ch = field_chars[idx]
         alternatives = CONFUSION_MAP.get(ch, [])
         for alt in alternatives:
             candidate_chars = list(field_chars)
             candidate_chars[idx] = alt
             cand_str = "".join(candidate_chars)
+            if len(cand_str) == 6 and not cand_str.isdigit():
+                continue
             if calculate_icao_check_digit(cand_str) == expected_digit:
                 return cand_str, True
+
+    # Try two-character substitutions if single-char didn't find a match
+    pairs = []
+    for i in range(len(field_chars)):
+        for j in range(i + 1, len(field_chars)):
+            pairs.append((i, j))
+    pairs.sort(key=lambda p: (0 if not field_chars[p[0]].isdigit() else 1) + (0 if not field_chars[p[1]].isdigit() else 1))
+
+    for i, j in pairs:
+        alts_i = CONFUSION_MAP.get(field_chars[i], [])
+        for alt_i in alts_i:
+            alts_j = CONFUSION_MAP.get(field_chars[j], [])
+            for alt_j in alts_j:
+                cand_chars = list(field_chars)
+                cand_chars[i] = alt_i
+                cand_chars[j] = alt_j
+                cand_str = "".join(cand_chars)
+                if len(cand_str) == 6 and not cand_str.isdigit():
+                    continue
+                if calculate_icao_check_digit(cand_str) == expected_digit:
+                    return cand_str, True
 
     # No valid substitution found
     return raw_field, False
@@ -126,7 +181,7 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
         td1_lines = None
         for i in range(len(lines) - 2):
             l1, l2, l3 = lines[i], lines[i+1], lines[i+2]
-            if (l1.startswith(('I', '1', 'A', 'C', 'IT', 'IU')) or 'UZB' in l1[:8]) and len(l1) >= 20:
+            if (l1.startswith(('I', '1', 'A', 'C', 'IT', 'IU')) or 'UZB' in l1[:10]) and len(l1) >= 20:
                 td1_lines = (l1, l2, l3)
                 break
 
@@ -137,9 +192,15 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
             l2 = l2.ljust(30, '<')
             l3 = l3.ljust(30, '<')
 
-            # 1. Document Number Checksum (Line 1: chars 5:14, check digit at 14)
-            raw_doc = l1[5:14]
-            doc_cd = l1[14] if len(l1) > 14 and l1[14].isdigit() else None
+            # 1. Document Number Checksum (Line 1)
+            idx_uzb = l1.find('UZB')
+            if idx_uzb != -1 and len(l1) >= idx_uzb + 13:
+                raw_doc = l1[idx_uzb + 3 : idx_uzb + 12]
+                doc_cd = l1[idx_uzb + 12] if l1[idx_uzb + 12].isdigit() else None
+            else:
+                raw_doc = l1[5:14]
+                doc_cd = l1[14] if len(l1) > 14 and l1[14].isdigit() else None
+
             if doc_cd:
                 corrected_doc, was_corr = auto_correct_mrz_field(raw_doc, doc_cd)
                 if was_corr:
@@ -148,9 +209,19 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
                 result['document_number_valid'] = verify_icao_check_digit(raw_doc, doc_cd)
                 result['details']['doc_check'] = {'data': raw_doc, 'check_digit': doc_cd, 'valid': result['document_number_valid']}
 
-            # 2. Birth Date Checksum (Line 2: chars 0:6, check digit at 6)
-            raw_birth = l2[0:6]
-            birth_cd = l2[6] if len(l2) > 6 and l2[6].isdigit() else None
+            # 2. Birth Date & Expiry Date Checksums (Line 2)
+            m_l2 = re.search(r'([A-Z0-9]{6})([0-9])[MF<]([A-Z0-9]{6})([0-9])', l2)
+            if m_l2:
+                raw_birth = m_l2.group(1)
+                birth_cd = m_l2.group(2)
+                raw_expiry = m_l2.group(3)
+                expiry_cd = m_l2.group(4)
+            else:
+                raw_birth = l2[0:6]
+                birth_cd = l2[6] if len(l2) > 6 and l2[6].isdigit() else None
+                raw_expiry = l2[8:14]
+                expiry_cd = l2[14] if len(l2) > 14 and l2[14].isdigit() else None
+
             if birth_cd:
                 corrected_birth, was_corr = auto_correct_mrz_field(raw_birth, birth_cd)
                 if was_corr:
@@ -159,9 +230,6 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
                 result['birth_date_valid'] = verify_icao_check_digit(raw_birth, birth_cd)
                 result['details']['birth_check'] = {'data': raw_birth, 'check_digit': birth_cd, 'valid': result['birth_date_valid']}
 
-            # 3. Expiry Date Checksum (Line 2: chars 8:14, check digit at 14)
-            raw_expiry = l2[8:14]
-            expiry_cd = l2[14] if len(l2) > 14 and l2[14].isdigit() else None
             if expiry_cd:
                 corrected_exp, was_corr = auto_correct_mrz_field(raw_expiry, expiry_cd)
                 if was_corr:
@@ -169,6 +237,7 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
                     raw_expiry = corrected_exp
                 result['expiry_date_valid'] = verify_icao_check_digit(raw_expiry, expiry_cd)
                 result['details']['expiry_check'] = {'data': raw_expiry, 'check_digit': expiry_cd, 'valid': result['expiry_date_valid']}
+
 
             # 4. Composite Checksum (Line 2: char 29)
             if len(l2) >= 30 and l2[29].isdigit():

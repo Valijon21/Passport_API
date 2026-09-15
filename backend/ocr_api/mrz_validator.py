@@ -184,6 +184,46 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
     return raw_field, False
 
 
+def calculate_uz_pinfl_check_digit(d13: str) -> int:
+    """Calculate 14th check digit for 14-digit Uzbekistan PINFL using 7-3-1 weights."""
+    if not d13 or len(d13) < 13 or not d13[:13].isdigit():
+        return -1
+    weights = [7, 3, 1, 7, 3, 1, 7, 3, 1, 7, 3, 1, 7]
+    total = sum(int(ch) * w for ch, w in zip(d13[:13], weights))
+    return total % 10
+
+
+def auto_correct_uz_pinfl(pinfl: str) -> Tuple[str, bool]:
+    """
+    Attempt to correct common OCR optical substitutions in 14-digit Uzbekistan PINFL.
+    Returns (corrected_pinfl, was_corrected).
+    """
+    if not pinfl or len(pinfl) != 14 or not pinfl.isdigit() or pinfl[0] not in '123456':
+        return pinfl, False
+    expected_cd = int(pinfl[13])
+    if calculate_uz_pinfl_check_digit(pinfl[:13]) == expected_cd:
+        return pinfl, False
+    subs = {
+        '8': ['2', '0', '3'],
+        '2': ['8', '7', '1'],
+        '1': ['7', '4'],
+        '7': ['1', '2'],
+        '0': ['6', '8', '9'],
+        '6': ['0', '5', '8'],
+        '5': ['6', '3'],
+        '3': ['5', '8']
+    }
+    # Prioritize scanning order & district digits (indices 12, 11, 10, 9, 8, 7, 13)
+    for pos in [12, 11, 10, 9, 8, 7, 13]:
+        orig = pinfl[pos]
+        if orig in subs:
+            for cand in subs[orig]:
+                test_pinfl = pinfl[:pos] + cand + pinfl[pos+1:]
+                if calculate_uz_pinfl_check_digit(test_pinfl[:13]) == int(test_pinfl[13]):
+                    return test_pinfl, True
+    return pinfl, False
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 2. MRZ CHECKSUM VERIFICATION (TD1 & TD3)
 # ──────────────────────────────────────────────────────────────────────────────

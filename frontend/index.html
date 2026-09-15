@@ -381,9 +381,13 @@
               <span class="btn-copy-icon">📋</span>
               <span class="btn-copy-label">Barchasini Nusxalash</span>
             </button>
-            <button type="button" class="btn-copy-compact" id="btnCopyCompact" onclick="copyStructuredCompact()" title="F.I.O, JSHSHIR va Hujjat raqamini bir qatorda nusxalash">
+            <button type="button" class="btn-copy-action btn-copy-compact" id="btnCopyCompact" onclick="copyStructuredCompact()" title="F.I.O va JSHSHIR (PINFL) ni nusxalash">
               <span class="btn-copy-icon">⚡</span>
               <span class="btn-copy-label">F.I.O + JSHSHIR</span>
+            </button>
+            <button type="button" class="btn-copy-action btn-copy-doc" id="btnCopyDoc" onclick="copyStructuredDoc()" title="F.I.O, JSHSHIR va Hujjat raqamini nusxalash">
+              <span class="btn-copy-icon">🪪</span>
+              <span class="btn-copy-label">F.I.O + JSHSHIR + Hujjat</span>
             </button>
           </div>
         </div>
@@ -425,6 +429,7 @@
       <!-- Export -->
       <div class="export-row">
         <button class="btn-export btn-export-highlight" onclick="copyAllStructuredFields()" title="Barcha ma'lumotlarni buferga nusxalash">📋 Barchasini Nusxalash</button>
+        <button class="btn-export btn-export-doc" onclick="copyStructuredDoc()" title="F.I.O, JSHSHIR va Hujjat raqamini nusxalash">🪪 F.I.O + JSHSHIR + Hujjat</button>
         <button class="btn-export" onclick="exportJSON()">⬇ JSON</button>
         <button class="btn-export" onclick="exportCSV()">⬇ CSV</button>
         <button class="btn-export" onclick="exportTXT()">⬇ TXT</button>
@@ -670,6 +675,6 @@
   <!-- Toast Notifications Container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="app.js?v=1.3.4"></script>
+  <script src="app.js?v=1.3.5"></script>
 </body>
 </html>

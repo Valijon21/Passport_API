@@ -2318,18 +2318,16 @@ async function copyAllStructuredFields() {
 async function copyStructuredCompact() {
   const fields = getExtractedFields();
   if (!fields) {
-    showToast("Nusxalash uchun ma'lumot mavjud emas.", 'warn');
+    showToast("Nusxalash uchun ma'lumot mavjud emas. Avval ID kartani skanerlang.", 'warn');
     return;
   }
 
   const parts = [];
   if (fields.full_name) parts.push(fields.full_name);
   if (fields.personal_number) parts.push(`JSHSHIR: ${fields.personal_number}`);
-  if (fields.document_number) parts.push(fields.document_number);
-  if (fields.date_of_birth) parts.push(fields.date_of_birth);
 
   if (!parts.length) {
-    showToast("Ma'lumot topilmadi.", 'warn');
+    showToast("F.I.O va JSHSHIR maydonlari topilmadi.", 'warn');
     return;
   }
 
@@ -2346,13 +2344,60 @@ async function copyStructuredCompact() {
 
   const btn = document.getElementById('btnCopyCompact');
   if (btn) {
+    btn.classList.add('copied');
     const origHtml = btn.innerHTML;
     btn.innerHTML = `<span class="btn-copy-icon">✅</span><span class="btn-copy-label">Nusxalandi!</span>`;
-    setTimeout(() => { btn.innerHTML = origHtml; }, 2000);
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = origHtml;
+    }, 2200);
   }
 
-  showToast('⚡ F.I.O va asosiy rekvizitlar nusxalandi!', 'success');
-  log(`Qisqa nusxa olindi: ${compactText}`, LEVELS.OK);
+  showToast('⚡ F.I.O va JSHSHIR nusxalandi!', 'success');
+  log(`F.I.O va JSHSHIR nusxalandi: ${compactText}`, LEVELS.OK);
+}
+
+async function copyStructuredDoc() {
+  const fields = getExtractedFields();
+  if (!fields) {
+    showToast("Nusxalash uchun ma'lumot mavjud emas. Avval ID kartani skanerlang.", 'warn');
+    return;
+  }
+
+  const parts = [];
+  if (fields.full_name) parts.push(fields.full_name);
+  if (fields.personal_number) parts.push(`JSHSHIR: ${fields.personal_number}`);
+  if (fields.document_number) parts.push(`Hujjat: ${fields.document_number}`);
+
+  if (!parts.length) {
+    showToast("Asosiy rekvizitlar topilmadi.", 'warn');
+    return;
+  }
+
+  const docText = parts.join(' | ');
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(docText);
+    } else {
+      fallbackCopyText(docText);
+    }
+  } catch (err) {
+    fallbackCopyText(docText);
+  }
+
+  const btn = document.getElementById('btnCopyDoc');
+  if (btn) {
+    btn.classList.add('copied');
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = `<span class="btn-copy-icon">✅</span><span class="btn-copy-label">Nusxalandi!</span>`;
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = origHtml;
+    }, 2200);
+  }
+
+  showToast('🪪 F.I.O, JSHSHIR va Hujjat raqami nusxalandi!', 'success');
+  log(`F.I.O, JSHSHIR va Hujjat raqami nusxalandi: ${docText}`, LEVELS.OK);
 }
 
 async function copyText(elId) {

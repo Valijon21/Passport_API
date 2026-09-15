@@ -140,8 +140,11 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
         if cand_str.isdigit() and calculate_icao_check_digit(cand_str) == expected_digit:
             return cand_str, True
 
-    # Try single-character substitution (prioritize non-digit positions)
-    indices = sorted(range(len(field_chars)), key=lambda idx: 0 if not field_chars[idx].isdigit() else 1)
+    # Try single-character substitution (prioritize non-digit positions; for dates, prioritize month/day over year)
+    if len(field_chars) == 6 and all(c.isdigit() for c in field_chars):
+        indices = [3, 2, 5, 4, 1, 0]
+    else:
+        indices = sorted(range(len(field_chars)), key=lambda idx: 0 if not field_chars[idx].isdigit() else 1)
     for idx in indices:
         ch = field_chars[idx]
         alternatives = CONFUSION_MAP.get(ch, [])
@@ -152,8 +155,12 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
             # Never mutate pos 0 or 1 into digits for 9-char doc numbers
             if len(cand_str) == 9 and (cand_str[0].isdigit() or cand_str[1].isdigit() or not cand_str[2:].isdigit()):
                 continue
-            if len(cand_str) == 6 and not cand_str.isdigit():
-                continue
+            if len(cand_str) == 6:
+                if not cand_str.isdigit():
+                    continue
+                mm, dd = int(cand_str[2:4]), int(cand_str[4:6])
+                if not (1 <= mm <= 12 and 1 <= dd <= 31):
+                    continue
             if calculate_icao_check_digit(cand_str) == expected_digit:
                 return cand_str, True
 

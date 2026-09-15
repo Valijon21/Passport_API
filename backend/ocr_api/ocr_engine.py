@@ -28,7 +28,7 @@ import cv2
 import pytesseract
 from PIL import Image
 from typing import Optional, Dict, Any, Tuple, List
-from .mrz_validator import build_verification_report, auto_correct_mrz_field, cross_check_pinfl, auto_correct_uz_pinfl
+from .mrz_validator import build_verification_report, auto_correct_mrz_field, cross_check_pinfl, auto_correct_uz_pinfl, calculate_icao_check_digit
 
 logger = logging.getLogger('ocr_api')
 
@@ -309,13 +309,13 @@ def _extract_mrz_from_image(img: np.ndarray) -> Tuple[Optional[Dict[str, Any]], 
         
         roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         rh, rw = roi_gray.shape[:2]
-        threshold_rh = 250 if is_vertical else 220
-        target_rh = 300 if is_vertical else 260
+        threshold_rh = 240 if is_vertical else 220
+        target_rh = 280 if is_vertical else 260
         if rh < threshold_rh:
             scale = target_rh / rh
             roi_gray = cv2.resize(roi_gray, (int(rw * scale), target_rh), interpolation=cv2.INTER_CUBIC)
             
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         roi_enh = clahe.apply(roi_gray)
         
         raw_mrz = pytesseract.image_to_string(roi_enh, lang=LANG_MRZ, config=mrz_config)
@@ -344,7 +344,7 @@ def _extract_mrz_from_image(img: np.ndarray) -> Tuple[Optional[Dict[str, Any]], 
     return best_mrz_data, best_raw_text
 
 
-def _parse_mrz_birth_date(s: str) -> Optional[str]:
+def _parse_mrz_birth_date(s: str, force_century: Optional[int] = None) -> Optional[str]:
     """Convert YYMMDD string to birth date (YYYY-MM-DD)."""
     if not s or len(s) != 6 or not s.isdigit():
         return None
@@ -352,12 +352,15 @@ def _parse_mrz_birth_date(s: str) -> Optional[str]:
     if not (1 <= mm <= 12 and 1 <= dd <= 31):
         return None
         
-    current_year = int(time.strftime('%Y'))
-    max_birth_2digit = (current_year - 14) % 100
-    if yy <= max_birth_2digit:
-        year = 2000 + yy
+    if force_century in (1800, 1900, 2000):
+        year = force_century + yy
     else:
-        year = 1900 + yy
+        current_year = int(time.strftime('%Y'))
+        max_birth_2digit = (current_year - 14) % 100
+        if yy <= max_birth_2digit:
+            year = 2000 + yy
+        else:
+            year = 1900 + yy
         
     return f"{year:04d}-{mm:02d}-{dd:02d}"
 
@@ -393,12 +396,13 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
         return ''.join(dmap.get(c, c) for c in s)
         
     try:
-        # ── 1. Check TD1 First if len(lines) >= 3 (ID Card 3-line) ───────────
-        if len(lines) >= 3:
+        has_passport_marker = any(l.startswith(('P<', '<P<', 'P<UZB', 'PUZB')) or 'P<UZB' in l for l in lines)
+        # ── 1. Check TD1 First if len(lines) >= 3 and no passport marker detected ───
+        if len(lines) >= 3 and not has_passport_marker:
             for i in range(len(lines) - 2):
                 l1, l2, l3 = lines[i], lines[i + 1], lines[i + 2]
-                # TD1 line 1: starts with I, 1, A, C or has UZB in first 8 chars, never P<
-                is_td1_l1 = (l1.startswith(('I', '1', 'A', 'C', 'IT', 'IU')) or 'UZB' in l1[:10]) and not l1.startswith(('P<', 'PM', 'PA'))
+                # TD1 line 1: starts with I, 1, A, C and has UZB country code in first 10 chars, never P<
+                is_td1_l1 = (l1.startswith(('I', '1', 'A', 'C', 'IT', 'IU')) or 'UZB' in l1[:10]) and ('UZB' in l1[:10] or bool(re.search(r'U[Z27][B8]', l1[:10]))) and not l1.startswith(('P<', 'PM', 'PA'))
                 if is_td1_l1 and len(l1) >= 20:
                     doc_num = None
                     jshshir = None
@@ -466,7 +470,6 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
                     if doc_cand:
                         doc_num = doc_cand
                         if doc_cd and doc_cd.isdigit():
-                            from .mrz_validator import calculate_icao_check_digit
                             if calculate_icao_check_digit(doc_num) == doc_cd:
                                 pass
                             else:
@@ -662,19 +665,7 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
                         doc_num = raw_doc
                         nationality = "O'zbekiston"
                         
-                        b_cand = l2[idx_uzb + 3 : idx_uzb + 9] if len(l2) >= idx_uzb + 9 else None
-                        if b_cand and len(l2) > idx_uzb + 9 and l2[idx_uzb + 9].isdigit():
-                            b_cand, _ = auto_correct_mrz_field(b_cand, l2[idx_uzb + 9])
-                        birth_date = _parse_mrz_birth_date(b_cand) if b_cand else None
-                        
-                        sex_ch = l2[idx_uzb + 10] if len(l2) > idx_uzb + 10 else ''
-                        gender = 'Erkak' if sex_ch == 'M' else ('Ayol' if sex_ch == 'F' else None)
-                        
-                        e_cand = l2[idx_uzb + 11 : idx_uzb + 17] if len(l2) >= idx_uzb + 17 else None
-                        if e_cand and len(l2) > idx_uzb + 17 and l2[idx_uzb + 17].isdigit():
-                            e_cand, _ = auto_correct_mrz_field(e_cand, l2[idx_uzb + 17])
-                        expiry_date = _parse_mrz_expiry_date(e_cand) if e_cand else None
-                        
+                        # Extract JSHSHIR first to cross-verify birth date and check digits
                         jshshir = None
                         pinfl_chunk = l2[idx_uzb + 18 : idx_uzb + 32] if len(l2) >= idx_uzb + 32 else ''
                         if len(pinfl_chunk) == 14 and pinfl_chunk.isdigit() and pinfl_chunk[0] in '3456':
@@ -690,6 +681,31 @@ def _parse_mrz_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
                                 
                         if jshshir:
                             jshshir, _ = auto_correct_uz_pinfl(jshshir)
+
+                        b_cand = l2[idx_uzb + 3 : idx_uzb + 9] if len(l2) >= idx_uzb + 9 else None
+                        b_cd = l2[idx_uzb + 9] if len(l2) > idx_uzb + 9 and l2[idx_uzb + 9].isdigit() else None
+                        if b_cand and b_cd:
+                            b_cand, _ = auto_correct_mrz_field(b_cand, b_cd)
+
+                        # Synergize with JSHSHIR if available
+                        if jshshir and len(jshshir) == 14 and jshshir[0] in '123456':
+                            j_dd, j_mm, j_yy = jshshir[1:3], jshshir[3:5], jshshir[5:7]
+                            j_mrz_b = f"{j_yy}{j_mm}{j_dd}"
+                            if b_cd and calculate_icao_check_digit(j_mrz_b) == b_cd:
+                                b_cand = j_mrz_b
+                            elif not b_cand:
+                                b_cand = j_mrz_b
+
+                        force_cent = 2000 if jshshir and jshshir[0] in ('5', '6') else (1900 if jshshir and jshshir[0] in ('3', '4') else None)
+                        birth_date = _parse_mrz_birth_date(b_cand, force_century=force_cent) if b_cand else None
+                        
+                        sex_ch = l2[idx_uzb + 10] if len(l2) > idx_uzb + 10 else ''
+                        gender = 'Erkak' if sex_ch == 'M' else ('Ayol' if sex_ch == 'F' else None)
+                        
+                        e_cand = l2[idx_uzb + 11 : idx_uzb + 17] if len(l2) >= idx_uzb + 17 else None
+                        if e_cand and len(l2) > idx_uzb + 17 and l2[idx_uzb + 17].isdigit():
+                            e_cand, _ = auto_correct_mrz_field(e_cand, l2[idx_uzb + 17])
+                        expiry_date = _parse_mrz_expiry_date(e_cand) if e_cand else None
                                 
                         return {
                             'mrz_detected': True,
@@ -854,12 +870,29 @@ def _extract_dates(text: str) -> Dict[str, Optional[str]]:
         all_raw.append(f"{dd}.{mm}.{yyyy}")
 
         
-    unique_dates = sorted(list(set([norm_date(d) for d in all_raw if norm_date(d)])))
+    all_dates = [norm_date(d) for d in all_raw if norm_date(d)]
+    unique_dates = sorted(list(set(all_dates)))
+    if len(unique_dates) > 1:
+        # Group dates by year to merge bilingual/OCR typo duplicates
+        year_groups = {}
+        for d in unique_dates:
+            y = int(d.split('-')[0])
+            year_groups.setdefault(y, []).append(d)
+        filtered_dates = []
+        for y, d_list in sorted(year_groups.items()):
+            best_d = max(d_list, key=lambda x: all_dates.count(x))
+            filtered_dates.append(best_d)
+        unique_dates = filtered_dates
     
     if len(unique_dates) >= 3:
         dates['birth_date'] = unique_dates[0]
-        dates['issue_date'] = unique_dates[1]
-        dates['expiry_date'] = unique_dates[2]
+        dates['expiry_date'] = unique_dates[-1]
+        inter = unique_dates[1:-1]
+        if len(inter) == 1:
+            dates['issue_date'] = inter[0]
+        else:
+            exp_y = int(dates['expiry_date'].split('-')[0])
+            dates['issue_date'] = min(inter, key=lambda d: min(abs(int(d.split('-')[0]) - (exp_y - 10)), abs(int(d.split('-')[0]) - (exp_y - 5))))
     elif len(unique_dates) == 2:
         y0 = int(unique_dates[0].split('-')[0])
         y1 = int(unique_dates[1].split('-')[0])
@@ -1625,12 +1658,22 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                     if clean_first and clean_first.replace(' ', '').isalpha() and len(clean_first) >= 3 and clean_first != 'EEE':
                         body_first = structured.get('first_name')
                         if body_first and _names_match_uzbek_translit(body_first, clean_first):
-                            # Preserve genuine Uzbek Latin spelling with 'X' (e.g. DADAXON)
+                            # Preserve genuine Uzbek Latin spelling with 'X' (e.g. DADAXON, XUSNIYA)
                             pass
                         elif body_first and body_first != 'EEE' and clean_first.startswith(body_first):
                             structured[key] = body_first
-                        elif not body_first or body_first == 'EEE':
-                            structured[key] = clean_first
+                        else:
+                            # Body first name does NOT match MRZ! Check if real Uzbek name exists elsewhere in body
+                            matching_word = None
+                            for word in re.findall(r'[A-Za-zʻʼ\']+', ocr_corpus):
+                                word_clean = _normalize_given_name(word.upper())
+                                if word_clean and _names_match_uzbek_translit(word_clean, clean_first):
+                                    matching_word = word_clean
+                                    break
+                            if matching_word:
+                                structured[key] = matching_word
+                            else:
+                                structured[key] = clean_first
                 else:
                     if val and not structured.get(key):
                         structured[key] = val

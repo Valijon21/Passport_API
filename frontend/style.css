@@ -134,7 +134,6 @@ body {
 }
 
 /* ── UPLOAD ────────────────────────────────────────────────── */
-.upload-section {}
 .upload-zone {
   border: 1.5px dashed var(--border2);
   border-radius: var(--radius);

@@ -14,6 +14,7 @@ urlpatterns = [
     path('', serve, {'document_root': FRONTEND_DIR, 'path': 'index.html'}, name='home'),
     path('style.css', serve, {'document_root': FRONTEND_DIR, 'path': 'style.css'}, name='style'),
     path('app.js', serve, {'document_root': FRONTEND_DIR, 'path': 'app.js'}, name='app'),
+    path('js/<path:path>', serve, {'document_root': FRONTEND_DIR / 'js'}, name='frontend-js'),
 
     # ── API & Admin ───────────────────────────────────────────────────────────
     path('admin/', admin.site.urls),

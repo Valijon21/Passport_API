@@ -17,7 +17,7 @@ ICAO_WEIGHTS = [7, 3, 1]
 
 # Typical OCR substitution confusion pairs
 CONFUSION_MAP = {
-    '0': ['O', 'Q', 'D', 'U'],
+    '0': ['O', 'Q', 'D', 'U', '8', '6'],
     'O': ['0', 'Q', 'D'],
     'Q': ['0', 'O'],
     'D': ['0', 'O'],
@@ -28,15 +28,16 @@ CONFUSION_MAP = {
     '|': ['1', 'I'],
     'T': ['1', '7', 'I'],
     '7': ['1', 'T'],
-    '2': ['Z', '4'],
-    'Z': ['2'],
+    '2': ['Z', '4', '7'],
+    'Z': ['2', '7'],
+    '3': ['5', '8', 'E'],
     '4': ['2', 'A', '6'],
     'A': ['4'],
-    '5': ['S'],
+    '5': ['S', '3', '6'],
     'S': ['5'],
-    '8': ['B'],
+    '8': ['B', '3', '0'],
     'B': ['8'],
-    '6': ['G', 'b', '4', '0'],
+    '6': ['G', 'b', '4', '0', '5'],
     'G': ['6'],
     'b': ['6'],
 }
@@ -72,6 +73,24 @@ def verify_icao_check_digit(data: str, expected_digit: str) -> bool:
     return calculate_icao_check_digit(data) == str(expected_digit)
 
 
+def normalize_mrz_doc_chars(doc_str: str) -> str:
+    """Normalize Uzbek document number: positions 0-1 must be letters, positions 2-8 must be digits."""
+    if not doc_str or len(doc_str) != 9:
+        return doc_str or ""
+    chars = list(doc_str.upper())
+    d2l_0 = {'4': 'A', '0': 'O', '1': 'I', '8': 'B', '2': 'Z', '5': 'S', '7': 'T'}
+    d2l_1 = {'4': 'A', '0': 'O', '1': 'I', '8': 'B', '2': 'Z', '5': 'S', '7': 'T', '3': 'E'}
+    if chars[0].isdigit() and chars[0] in d2l_0:
+        chars[0] = d2l_0[chars[0]]
+    if chars[1].isdigit() and chars[1] in d2l_1:
+        chars[1] = d2l_1[chars[1]]
+    l2d = {'O': '0', 'D': '0', 'Q': '0', 'I': '1', 'L': '1', 'T': '1', 'Z': '2', 'B': '8', 'S': '5', 'G': '6', 'A': '4'}
+    for idx in range(2, 9):
+        if chars[idx].isalpha() and chars[idx] in l2d:
+            chars[idx] = l2d[chars[idx]]
+    return "".join(chars)
+
+
 def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bool]:
     """
     Attempt to correct common OCR errors if check digit fails.
@@ -80,6 +99,13 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
     if not raw_field or not expected_digit or not expected_digit.isdigit():
         return raw_field, False
 
+    # Normalize candidate if it's a 9-char doc number
+    if len(raw_field) == 9:
+        norm_field = normalize_mrz_doc_chars(raw_field)
+        if calculate_icao_check_digit(norm_field) == expected_digit:
+            return norm_field, (norm_field != raw_field)
+        raw_field = norm_field
+
     # If already valid, nothing to correct
     if calculate_icao_check_digit(raw_field) == expected_digit:
         return raw_field, False
@@ -87,10 +113,18 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
     field_chars = list(raw_field.upper())
 
     # Special heuristic for Uzbek Doc Numbers: 2 letters + 7 digits (e.g. AET364469 -> AE1364469)
-    if len(field_chars) == 9 and field_chars[0].isalpha() and field_chars[1].isalpha():
+    if len(field_chars) == 9:
+        d2l_0 = {'4': 'A', '0': 'O', '1': 'I', '8': 'B', '2': 'Z', '5': 'S', '7': 'T'}
+        d2l_1 = {'4': 'A', '0': 'O', '1': 'I', '8': 'B', '2': 'Z', '5': 'S', '7': 'T', '3': 'E'}
         letter_to_digit = {'T': '1', 'I': '1', 'L': '1', 'O': '0', 'D': '0', 'Z': '2', 'S': '5', 'B': '8', 'G': '6', 'A': '4'}
         cand = list(field_chars)
         changed = False
+        if cand[0].isdigit() and cand[0] in d2l_0:
+            cand[0] = d2l_0[cand[0]]
+            changed = True
+        if cand[1].isdigit() and cand[1] in d2l_1:
+            cand[1] = d2l_1[cand[1]]
+            changed = True
         for idx in range(2, 9):
             if cand[idx].isalpha() and cand[idx] in letter_to_digit:
                 cand[idx] = letter_to_digit[cand[idx]]
@@ -100,7 +134,7 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
 
     # Special heuristic for 6-digit Date fields (YYMMDD): all 6 chars must be digits
     if len(field_chars) == 6 and any(c.isalpha() for c in field_chars):
-        letter_to_digit = {'O': '0', 'D': '0', 'B': '8', 'S': '5', 'Z': '2', 'I': '1', 'L': '1', 'T': '1', 'A': '4', 'G': '6'}
+        letter_to_digit = {'O': '0', 'D': '0', 'Q': '0', 'B': '8', 'S': '5', 'Z': '2', 'I': '1', 'L': '1', 'T': '1', 'A': '4', 'G': '6'}
         cand = [letter_to_digit.get(c, c) for c in field_chars]
         cand_str = "".join(cand)
         if cand_str.isdigit() and calculate_icao_check_digit(cand_str) == expected_digit:
@@ -115,6 +149,9 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
             candidate_chars = list(field_chars)
             candidate_chars[idx] = alt
             cand_str = "".join(candidate_chars)
+            # Never mutate pos 0 or 1 into digits for 9-char doc numbers
+            if len(cand_str) == 9 and (cand_str[0].isdigit() or cand_str[1].isdigit() or not cand_str[2:].isdigit()):
+                continue
             if len(cand_str) == 6 and not cand_str.isdigit():
                 continue
             if calculate_icao_check_digit(cand_str) == expected_digit:
@@ -136,6 +173,8 @@ def auto_correct_mrz_field(raw_field: str, expected_digit: str) -> Tuple[str, bo
                 cand_chars[i] = alt_i
                 cand_chars[j] = alt_j
                 cand_str = "".join(cand_chars)
+                if len(cand_str) == 9 and (cand_str[0].isdigit() or cand_str[1].isdigit() or not cand_str[2:].isdigit()):
+                    continue
                 if len(cand_str) == 6 and not cand_str.isdigit():
                     continue
                 if calculate_icao_check_digit(cand_str) == expected_digit:
@@ -193,15 +232,52 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
             l3 = l3.ljust(30, '<')
 
             # 1. Document Number Checksum (Line 1)
-            idx_uzb = l1.find('UZB')
-            if idx_uzb != -1 and len(l1) >= idx_uzb + 13:
-                raw_doc = l1[idx_uzb + 3 : idx_uzb + 12]
-                doc_cd = l1[idx_uzb + 12] if l1[idx_uzb + 12].isdigit() else None
-            else:
-                raw_doc = l1[5:14]
-                doc_cd = l1[14] if len(l1) > 14 and l1[14].isdigit() else None
+            raw_doc = None
+            doc_cd = None
 
-            if doc_cd:
+            # Priority 1: Match from mrz_data if already extracted accurately
+            extracted_doc = mrz_data.get('document_number') if mrz_data else None
+            if extracted_doc and len(extracted_doc) == 9:
+                norm_ext = normalize_mrz_doc_chars(extracted_doc)
+                idx_in_l1 = l1.find(extracted_doc)
+                if idx_in_l1 == -1:
+                    idx_in_l1 = l1.find(norm_ext)
+                if idx_in_l1 != -1 and len(l1) > idx_in_l1 + 9 and l1[idx_in_l1 + 9].isdigit():
+                    raw_doc = norm_ext
+                    doc_cd = l1[idx_in_l1 + 9]
+
+            # Priority 2: Anchor relative to 14-digit JSHSHIR at right side of line 1
+            if not raw_doc:
+                m_jsh = re.search(r'([3-6]\d{13})<?$', l1)
+                if m_jsh and m_jsh.start() >= 10:
+                    doc_chunk = l1[m_jsh.start() - 10 : m_jsh.start()]
+                    cand_doc = normalize_mrz_doc_chars(doc_chunk[:9])
+                    cand_cd = doc_chunk[9]
+                    if len(cand_doc) == 9 and cand_doc[:2].isalpha() and cand_doc[2:].isdigit():
+                        raw_doc = cand_doc
+                        if cand_cd.isdigit():
+                            doc_cd = cand_cd
+
+            # Priority 3: Regex search for 2 letters/lookalikes + 7 digits
+            if not raw_doc:
+                m_doc = re.search(r'([A-Z0-9]{2}\d{7})([0-9])?', l1)
+                if m_doc:
+                    cand_doc = normalize_mrz_doc_chars(m_doc.group(1))
+                    if len(cand_doc) == 9 and cand_doc[:2].isalpha() and cand_doc[2:].isdigit():
+                        raw_doc = cand_doc
+                        doc_cd = m_doc.group(2)
+
+            # Priority 4: Positional fallback
+            if not raw_doc:
+                idx_uzb = l1.find('UZB')
+                if idx_uzb != -1 and len(l1) >= idx_uzb + 13:
+                    raw_doc = normalize_mrz_doc_chars(l1[idx_uzb + 3 : idx_uzb + 12])
+                    doc_cd = l1[idx_uzb + 12] if l1[idx_uzb + 12].isdigit() else None
+                else:
+                    raw_doc = normalize_mrz_doc_chars(l1[5:14])
+                    doc_cd = l1[14] if len(l1) > 14 and l1[14].isdigit() else None
+
+            if raw_doc and doc_cd:
                 corrected_doc, was_corr = auto_correct_mrz_field(raw_doc, doc_cd)
                 if was_corr:
                     result['auto_corrections_applied'].append(f"DocNum '{raw_doc}' -> '{corrected_doc}'")
@@ -210,19 +286,49 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
                 result['details']['doc_check'] = {'data': raw_doc, 'check_digit': doc_cd, 'valid': result['document_number_valid']}
 
             # 2. Birth Date & Expiry Date Checksums (Line 2)
-            m_l2 = re.search(r'([A-Z0-9]{6})([0-9])[MF<]([A-Z0-9]{6})([0-9])', l2)
+            l2_norm = l2.replace('М', 'M').replace('Ж', 'F')
+            def _clean_date_digits(s: str) -> str:
+                dmap = {'O': '0', 'D': '0', 'Q': '0', 'o': '0', 'I': '1', 'L': '1', 'l': '1', '|': '1', 'T': '1',
+                        'Z': '2', 'z': '2', 'A': '4', 'S': '5', 's': '5', 'G': '6', 'b': '6', 'B': '8'}
+                return ''.join(dmap.get(c, c) for c in s)
+
+            raw_birth = None
+            birth_cd = None
+            raw_expiry = None
+            expiry_cd = None
+
+            m_l2 = re.search(r'([A-Z0-9]{6})([0-9])[MF<]([A-Z0-9]{6})([0-9])', l2_norm)
             if m_l2:
-                raw_birth = m_l2.group(1)
+                raw_birth = _clean_date_digits(m_l2.group(1))
                 birth_cd = m_l2.group(2)
-                raw_expiry = m_l2.group(3)
+                raw_expiry = _clean_date_digits(m_l2.group(3))
                 expiry_cd = m_l2.group(4)
             else:
-                raw_birth = l2[0:6]
-                birth_cd = l2[6] if len(l2) > 6 and l2[6].isdigit() else None
-                raw_expiry = l2[8:14]
-                expiry_cd = l2[14] if len(l2) > 14 and l2[14].isdigit() else None
+                sex_idx = -1
+                for s_idx in range(5, min(12, len(l2_norm))):
+                    if l2_norm[s_idx] in ('M', 'F'):
+                        sex_idx = s_idx
+                        break
+                if sex_idx >= 6:
+                    raw_b_chunk = _clean_date_digits(l2_norm[:sex_idx])
+                    if len(raw_b_chunk) >= 7:
+                        raw_birth = raw_b_chunk[-7:-1]
+                        birth_cd = raw_b_chunk[-1] if raw_b_chunk[-1].isdigit() else None
+                    else:
+                        raw_birth = raw_b_chunk[:6]
+                        birth_cd = raw_b_chunk[6] if len(raw_b_chunk) > 6 and raw_b_chunk[6].isdigit() else None
 
-            if birth_cd:
+                    after_s = _clean_date_digits(l2_norm[sex_idx + 1 :])
+                    if len(after_s) >= 7:
+                        raw_expiry = after_s[:6]
+                        expiry_cd = after_s[6] if after_s[6].isdigit() else None
+                else:
+                    raw_birth = _clean_date_digits(l2_norm[0:6])
+                    birth_cd = l2_norm[6] if len(l2_norm) > 6 and l2_norm[6].isdigit() else None
+                    raw_expiry = _clean_date_digits(l2_norm[8:14])
+                    expiry_cd = l2_norm[14] if len(l2_norm) > 14 and l2_norm[14].isdigit() else None
+
+            if raw_birth and birth_cd:
                 corrected_birth, was_corr = auto_correct_mrz_field(raw_birth, birth_cd)
                 if was_corr:
                     result['auto_corrections_applied'].append(f"BirthDate '{raw_birth}' -> '{corrected_birth}'")
@@ -230,7 +336,7 @@ def validate_mrz_checksums(mrz_data: Optional[Dict[str, Any]], raw_lines: Option
                 result['birth_date_valid'] = verify_icao_check_digit(raw_birth, birth_cd)
                 result['details']['birth_check'] = {'data': raw_birth, 'check_digit': birth_cd, 'valid': result['birth_date_valid']}
 
-            if expiry_cd:
+            if raw_expiry and expiry_cd:
                 corrected_exp, was_corr = auto_correct_mrz_field(raw_expiry, expiry_cd)
                 if was_corr:
                     result['auto_corrections_applied'].append(f"ExpiryDate '{raw_expiry}' -> '{corrected_exp}'")
@@ -417,11 +523,38 @@ def cross_check_pinfl(
             if clean_bd == pinfl_birth_date:
                 res['birth_date_matches'] = True
             else:
-                res['birth_date_matches'] = False
-                res['is_valid'] = False
-                res['alerts'].append(
-                    f"Tug'ilgan sana nomuvofiqligi: OCR='{clean_bd}' vs JSHSHIR='{pinfl_birth_date}'"
-                )
+                # Check for single-digit optical OCR confusion (e.g. 04 vs 06, 24 vs 21/22/27)
+                bd_digits = clean_bd.replace('-', '')
+                pinfl_digits = pinfl_birth_date.replace('-', '')
+                is_optical_discrepancy = False
+                if len(bd_digits) == 8 and len(pinfl_digits) == 8 and bd_digits[:4] == pinfl_digits[:4]:
+                    # Same year
+                    if bd_digits[6:] == pinfl_digits[6:]:
+                        # Day matches, month has optical confusion (e.g. 04 vs 06)
+                        m1, m2 = bd_digits[4:6], pinfl_digits[4:6]
+                        if (m1 in ['04', '06', '01', '07'] and m2 in ['04', '06', '01', '07']):
+                            is_optical_discrepancy = True
+                    elif bd_digits[4:6] == pinfl_digits[4:6]:
+                        # Month matches, day has optical confusion
+                        d1, d2 = bd_digits[6:], pinfl_digits[6:]
+                        if sum(1 for a, b in zip(d1, d2) if a != b) <= 1:
+                            is_optical_discrepancy = True
+                    elif sum(1 for a, b in zip(bd_digits, pinfl_digits) if a != b) <= 1:
+                        is_optical_discrepancy = True
+
+                if is_optical_discrepancy:
+                    res['birth_date_matches'] = True
+                    res['optical_reconciliation'] = {
+                        'ocr_date': clean_bd,
+                        'authoritative_date': pinfl_birth_date,
+                        'note': f"Tug'ilgan sanada optik farq aniqlandi (OCR='{clean_bd}' vs JSHSHIR='{pinfl_birth_date}'), JSHSHIR ma'lumoti qabul qilindi."
+                    }
+                else:
+                    res['birth_date_matches'] = False
+                    res['is_valid'] = False
+                    res['alerts'].append(
+                        f"Tug'ilgan sana nomuvofiqligi: OCR='{clean_bd}' vs JSHSHIR='{pinfl_birth_date}'"
+                    )
         else:
             res['birth_date_matches'] = None
 

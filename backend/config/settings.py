@@ -107,11 +107,20 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '500/hour',
+        'anon': '300/hour',
+        'user': '1000/hour',
+        'burst': '30/minute',
     }
 }
+
+# ─── SECURITY HEADERS (OWASP 2025) ──────────────────────────────────────────
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+X_FRAME_OPTIONS = 'DENY'
+SILENCED_SYSTEM_CHECKS = ['security.W019'] if DEBUG else []
 
 # ─── SPECTACULAR (SWAGGER / OPENAPI) ───────────────────────────────────────
 SPECTACULAR_SETTINGS = {

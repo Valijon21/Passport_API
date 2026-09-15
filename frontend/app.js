@@ -10,7 +10,16 @@
 //  CONFIG
 // ══════════════════════════════════════════════════════════════
 const CONFIG = {
-  API_BASE: 'http://127.0.0.1:8000/api/v1',  // ← Django server
+  API_BASE: (() => {
+    if (typeof window !== 'undefined' && window.location.hostname) {
+      const host = window.location.hostname;
+      if (window.location.port === '8000') {
+        return `${window.location.origin}/api/v1`;
+      }
+      return `http://${host}:8000/api/v1`;
+    }
+    return 'http://127.0.0.1:8000/api/v1';
+  })(),
   ENDPOINTS: {
     ID_CARD:            '/ocr/id/',
     ID_FULL:            '/ocr/id-full/',

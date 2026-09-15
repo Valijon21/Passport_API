@@ -1,5 +1,6 @@
 """ocr_api/serializers.py — Request/Response serializers"""
 from rest_framework import serializers
+from .security_utils import validate_image_safety
 
 
 class OCRRequestSerializer(serializers.Serializer):
@@ -16,18 +17,7 @@ class OCRRequestSerializer(serializers.Serializer):
     )
 
     def validate_image(self, value):
-        # File size check (10MB)
-        if value.size > 10 * 1024 * 1024:
-            raise serializers.ValidationError(
-                "Rasm hajmi 10MB dan oshmasligi kerak."
-            )
-        # Content type check
-        allowed = ['image/jpeg', 'image/png', 'image/bmp', 'image/webp', 'image/tiff']
-        content_type = getattr(value, 'content_type', '')
-        if content_type and content_type not in allowed:
-            raise serializers.ValidationError(
-                f"Faqat {', '.join(allowed)} formatlar qabul qilinadi."
-            )
+        validate_image_safety(value)
         return value
 
 
@@ -39,8 +29,7 @@ class GeneralOCRRequestSerializer(serializers.Serializer):
     )
 
     def validate_image(self, value):
-        if value.size > 10 * 1024 * 1024:
-            raise serializers.ValidationError("Rasm hajmi 10MB dan oshmasligi kerak.")
+        validate_image_safety(value)
         return value
 
 
@@ -108,19 +97,11 @@ class FaceMatchRequestSerializer(serializers.Serializer):
     )
 
     def validate_document_image(self, value):
-        content_type = getattr(value, 'content_type', '') or ''
-        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise serializers.ValidationError("Hujjat fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
-        if value.size > MAX_FILE_SIZE:
-            raise serializers.ValidationError("Hujjat fayl hajmi 10 MB dan oshmasligi kerak.")
+        validate_image_safety(value)
         return value
 
     def validate_selfie_image(self, value):
-        content_type = getattr(value, 'content_type', '') or ''
-        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise serializers.ValidationError("Selfie fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
-        if value.size > MAX_FILE_SIZE:
-            raise serializers.ValidationError("Selfie fayl hajmi 10 MB dan oshmasligi kerak.")
+        validate_image_safety(value)
         return value
 
 
@@ -151,19 +132,11 @@ class IDCardFullRequestSerializer(serializers.Serializer):
     )
 
     def validate_front_image(self, value):
-        content_type = getattr(value, 'content_type', '') or ''
-        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise serializers.ValidationError("Old tomon fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
-        if value.size > MAX_FILE_SIZE:
-            raise serializers.ValidationError("Old tomon fayl hajmi 10 MB dan oshmasligi kerak.")
+        validate_image_safety(value)
         return value
 
     def validate_back_image(self, value):
-        content_type = getattr(value, 'content_type', '') or ''
-        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise serializers.ValidationError("Orqa tomon fayl formati noto'g'ri. Ruxsat etilgan: JPEG, PNG, WEBP, BMP, TIFF.")
-        if value.size > MAX_FILE_SIZE:
-            raise serializers.ValidationError("Orqa tomon fayl hajmi 10 MB dan oshmasligi kerak.")
+        validate_image_safety(value)
         return value
 
 
@@ -224,9 +197,14 @@ class DossierPDFRequestSerializer(serializers.Serializer):
         if value.size > MAX_PDF_SIZE:
             raise serializers.ValidationError("PDF fayl hajmi 25 MB dan oshmasligi kerak.")
         filename = getattr(value, 'name', '') or ''
-        content_type = getattr(value, 'content_type', '') or ''
-        if not filename.lower().endswith('.pdf') and content_type not in ('application/pdf', 'application/x-pdf', 'application/octet-stream'):
+        if not filename.lower().endswith('.pdf'):
             raise serializers.ValidationError("Faqat PDF formatdagi fayllar qabul qilinadi (.pdf).")
+        # Validate %PDF- magic bytes
+        value.seek(0)
+        magic = value.read(5)
+        value.seek(0)
+        if not magic.startswith(b'%PDF-'):
+            raise serializers.ValidationError("Fayl haqiqiy PDF emas yoki fayl sarlavhasi shikastlangan.")
         return value
 
 
@@ -253,8 +231,7 @@ class ForensicsRequestSerializer(serializers.Serializer):
     )
 
     def validate_image(self, value):
-        if value.size > MAX_FILE_SIZE:
-            raise serializers.ValidationError("Rasm hajmi 10 MB dan oshmasligi kerak.")
+        validate_image_safety(value)
         return value
 
 

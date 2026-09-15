@@ -369,6 +369,24 @@
 
       <!-- Structured Fields -->
       <div class="tab-content active" id="tab-structured">
+        <div class="structured-toolbar" id="structuredToolbar" style="display:none">
+          <div class="structured-meta-info">
+            <span class="meta-badge" id="structuredFoundBadge">
+              <span class="badge-dot"></span>
+              <span id="structuredFoundText">0 ta maydon topildi</span>
+            </span>
+          </div>
+          <div class="structured-actions">
+            <button type="button" class="btn-copy-all" id="btnCopyAll" onclick="copyAllStructuredFields()" title="ID kartaning familiyadan boshlab barcha maydonlarini to'liq nusxalash">
+              <span class="btn-copy-icon">📋</span>
+              <span class="btn-copy-label">Barchasini Nusxalash</span>
+            </button>
+            <button type="button" class="btn-copy-compact" id="btnCopyCompact" onclick="copyStructuredCompact()" title="F.I.O, JSHSHIR va Hujjat raqamini bir qatorda nusxalash">
+              <span class="btn-copy-icon">⚡</span>
+              <span class="btn-copy-label">F.I.O + JSHSHIR</span>
+            </button>
+          </div>
+        </div>
         <div class="fields-grid" id="fieldsGrid"></div>
       </div>
 
@@ -406,6 +424,7 @@
 
       <!-- Export -->
       <div class="export-row">
+        <button class="btn-export btn-export-highlight" onclick="copyAllStructuredFields()" title="Barcha ma'lumotlarni buferga nusxalash">📋 Barchasini Nusxalash</button>
         <button class="btn-export" onclick="exportJSON()">⬇ JSON</button>
         <button class="btn-export" onclick="exportCSV()">⬇ CSV</button>
         <button class="btn-export" onclick="exportTXT()">⬇ TXT</button>
@@ -648,6 +667,9 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.3.3"></script>
+  <!-- Toast Notifications Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js?v=1.3.4"></script>
 </body>
 </html>

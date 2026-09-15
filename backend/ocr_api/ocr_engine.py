@@ -1447,18 +1447,42 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         result['mrz'] = mrz_data
         
         # 4. Clean Grayscale enhancement for document text
+        # 4. Clean Grayscale enhancement for document text
         enhanced = _prepare_main_text_image(rotated_img)
         
         # 5. Main text OCR
         main_text = pytesseract.image_to_string(enhanced, lang=LANG_MAIN, config='--psm 6')
         result['raw_text'] = main_text
         
-        # If no MRZ and not passport, run specialized front panel extraction (ID card front only)
+        # Dual-side single document heuristics (e.g. A4 scan or phone photo containing both sides)
         is_passport_doc = bool(re.search(r'PASPORT|PASSPORT|REPUBLIC\s+OF\s+UZBEKISTAN|TD3', main_text, re.IGNORECASE))
-        panel_text = ''
-        if not mrz_data and not is_passport_doc:
+        is_dual_side_v = (h > 0.82 * w and h >= 600)
+        is_dual_side_h = (w > 1.8 * h and w >= 800)
+
+        # Fallback MRZ check on bottom half if dual-side vertical layout
+        if not mrz_data and is_dual_side_v:
             try:
-                panel_text = _extract_id_front_panel(rotated_img)
+                bottom_half = rotated_img[int(h * 0.42):, :]
+                mrz_cand, mrz_raw_cand = _extract_mrz_from_image(bottom_half)
+                if mrz_cand:
+                    mrz_data = mrz_cand
+                    raw_mrz_text = mrz_raw_cand
+                    result['mrz'] = mrz_data
+            except Exception as e_mrz_sub:
+                logger.warning(f"[OCR] Sub-half MRZ extraction exception: {e_mrz_sub}")
+
+        # Always run specialized front panel extraction for ID cards
+        panel_text = ''
+        if not is_passport_doc:
+            try:
+                if is_dual_side_v:
+                    top_half = rotated_img[0:int(h * 0.58), :]
+                    panel_text = _extract_id_front_panel(top_half)
+                elif is_dual_side_h:
+                    left_half = rotated_img[:, 0:int(w * 0.58)]
+                    panel_text = _extract_id_front_panel(left_half)
+                else:
+                    panel_text = _extract_id_front_panel(rotated_img)
             except Exception as e_panel:
                 logger.warning(f"[OCR] Front panel extraction exception: {e_panel}")
 
@@ -1466,8 +1490,17 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         raw_back_text = ''
         if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
             try:
-                t_panel = _extract_id_back_panel(rotated_img)
-                t_raw = pytesseract.image_to_string(rotated_img, lang=LANG_MAIN)
+                if is_dual_side_v:
+                    bottom_half = rotated_img[int(h * 0.42):, :]
+                    t_panel = _extract_id_back_panel(bottom_half)
+                    t_raw = pytesseract.image_to_string(bottom_half, lang=LANG_MAIN)
+                elif is_dual_side_h:
+                    right_half = rotated_img[:, int(w * 0.42):]
+                    t_panel = _extract_id_back_panel(right_half)
+                    t_raw = pytesseract.image_to_string(right_half, lang=LANG_MAIN)
+                else:
+                    t_panel = _extract_id_back_panel(rotated_img)
+                    t_raw = pytesseract.image_to_string(rotated_img, lang=LANG_MAIN)
                 raw_back_text = f"{t_panel}\n{t_raw}"
             except Exception as e_raw:
                 logger.warning(f"[OCR] Raw back text extraction exception: {e_raw}")
@@ -1556,13 +1589,35 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
                 elif jsh[0] in ('4', '6'):
                     structured['gender'] = 'Ayol'
 
+        # Fallback birth date from JSHSHIR if missing
+        if not structured.get('birth_date') and structured.get('jshshir') and len(structured['jshshir']) == 14:
+            p = structured['jshshir']
+            lead = p[0]
+            cent_map = {'1': 1800, '2': 1800, '3': 1900, '4': 1900, '5': 2000, '6': 2000}
+            if lead in cent_map:
+                try:
+                    dd = p[1:3]
+                    mm = p[3:5]
+                    yy = int(p[5:7])
+                    full_yr = cent_map[lead] + yy
+                    structured['birth_date'] = f"{full_yr}-{mm}-{dd}"
+                except Exception:
+                    pass
+
         # 8. Document side detection heuristic
         is_id_card_doc = bool(re.search(r'SHAXS\s*GUVOHNOMASI|GUVOHNOMASI|KARTA\s*RAQAMI|CARD\s*NUMBER|IDENTITY\s*CARD', ocr_corpus, re.IGNORECASE))
+        has_front_markers = bool(
+            re.search(r'OTASINING\s*IS[MN]?[I1]?|FAMILIYASI|GIVEN\s*NAMES|SURNAME|SHAXS\s*GUVOHNOMASI', ocr_corpus, re.IGNORECASE)
+            or structured.get('patronymic')
+            or (structured.get('surname') and structured.get('first_name'))
+        )
 
         if mrz_data and mrz_data.get('format') == 'TD1 (ID Card 3-line)':
-            result['detected_side'] = 'id_back'
-            # Uzbekistan TD1 ID card back side never contains patronymic
-            structured['patronymic'] = None
+            if has_front_markers:
+                result['detected_side'] = 'id_both_sides'
+            else:
+                result['detected_side'] = 'id_back'
+                structured['patronymic'] = None
         elif mrz_data and mrz_data.get('format') == 'TD3 (Passport 2-line)':
             result['detected_side'] = 'passport'
         elif (not is_id_card_doc and
@@ -1594,6 +1649,11 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
         try:
             from ocr_api.face_engine import detect_and_crop_face
             face_res = detect_and_crop_face(rotated_img)
+            if not face_res.get('detected') and is_dual_side_v:
+                top_half = rotated_img[0:int(h * 0.58), :]
+                face_res_top = detect_and_crop_face(top_half)
+                if face_res_top.get('detected'):
+                    face_res = face_res_top
             result['face'] = {
                 'detected': face_res['detected'],
                 'box': face_res['box'],
@@ -1622,6 +1682,37 @@ def extract_id_card(image_bytes: bytes, doc_type: str = 'auto') -> Dict[str, Any
             base_conf = max(base_conf, 88.0)
         result['confidence'] = round(min(base_conf, 99.0), 1)
 
+        # 11. Build Standardized Unified Citizen Profile
+        full_name_parts = [p for p in [structured.get('surname'), structured.get('first_name'), structured.get('patronymic')] if p]
+        full_name = ' '.join(full_name_parts)
+
+        citizen_profile: Dict[str, Any] = {
+            'document_type': 'ID_CARD' if is_id_card_doc else ('PASSPORT' if is_passport_doc else 'DOCUMENT'),
+            'document_number': structured.get('document_number'),
+            'personal_number': structured.get('jshshir'),
+            'surname': structured.get('surname'),
+            'first_name': structured.get('first_name'),
+            'patronymic': structured.get('patronymic'),
+            'full_name': full_name or structured.get('surname'),
+            'date_of_birth': structured.get('birth_date'),
+            'place_of_birth': structured.get('birth_place'),
+            'date_of_issue': structured.get('issue_date'),
+            'date_of_expiry': structured.get('expiry_date'),
+            'issuing_authority': structured.get('issuing_authority'),
+            'gender': structured.get('gender'),
+            'nationality': structured.get('nationality') or "O'zbekiston",
+            'is_valid_pair': True,
+            'different_cards_detected': False,
+        }
+        result['citizen_profile'] = citizen_profile
+
+        # Synchronize structured_fields aliases so consumers find keys under both naming schemes
+        structured['full_name'] = citizen_profile['full_name']
+        structured['personal_number'] = citizen_profile['personal_number']
+        structured['date_of_birth'] = citizen_profile['date_of_birth']
+        structured['place_of_birth'] = citizen_profile['place_of_birth']
+        structured['date_of_issue'] = citizen_profile['date_of_issue']
+        structured['date_of_expiry'] = citizen_profile['date_of_expiry']
         result['structured_fields'] = structured
         result['success'] = True
         

@@ -540,12 +540,16 @@ function renderIDResult(data) {
 
   renderConfidence(data.confidence, data.processing_time_ms);
   renderFaceCrop(data.face);
-  renderStructuredFields(data.structured_fields || {});
+  
+  const fields = data.citizen_profile || data.structured_fields || {};
+  renderStructuredFields(fields);
+  
   renderRawText(data.raw_text || '');
   renderMRZ(data.mrz);
   renderValidation(data.validation);
   renderDebug(data);
   showResults();
+  switchTabByName('structured');
 
   if (!data.success) {
     log(`OCR muvaffaqiyatsiz: ${data.error}`, LEVELS.WARN);
@@ -813,54 +817,103 @@ function renderFaceCrop(face) {
   }
 }
 
-const FIELD_LABELS = {
-  full_name:        { label: 'To\'liq ismi',           icon: '🪪' },
-  surname:          { label: 'Familiya',               icon: '👤' },
-  first_name:       { label: 'Ism',                    icon: '👤' },
-  patronymic:       { label: 'Otasining ismi',         icon: '👤' },
-  personal_number:  { label: 'JSHSHIR (PINFL)',        icon: '🔢' },
-  jshshir:          { label: 'JSHSHIR / INN',          icon: '🔢' },
-  document_number:  { label: 'Hujjat raqami',          icon: '🪪' },
-  date_of_birth:    { label: 'Tug\'ilgan sana',        icon: '📅' },
-  birth_date:       { label: 'Tug\'ilgan sana',        icon: '📅' },
-  place_of_birth:   { label: 'Tug\'ilgan joyi',        icon: '📍' },
-  birth_place:      { label: 'Tug\'ilgan joyi',        icon: '📍' },
-  date_of_issue:    { label: 'Berilgan sana',          icon: '📅' },
-  issue_date:       { label: 'Berilgan sana',          icon: '📅' },
-  date_of_expiry:   { label: 'Amal qilish muddati',    icon: '📅' },
-  expiry_date:      { label: 'Amal qilish muddati',    icon: '📅' },
-  gender:           { label: 'Jinsi',                  icon: '⚧' },
-  nationality:      { label: 'Fuqaroligi / Millati',   icon: '🌍' },
-  issuing_authority:{ label: 'Kim tomonidan berilgan', icon: '🏛' },
-};
+// ── Canonical 13-Field Standard Profile for Uzbekistan Documents ────
+const CANONICAL_CITIZEN_FIELDS = [
+  { key: 'full_name',          aliases: ['full_name'],                                  label: "TO'LIQ ISMI",             icon: '🪪' },
+  { key: 'surname',            aliases: ['surname'],                                    label: 'FAMILIYA',                icon: '👤' },
+  { key: 'first_name',         aliases: ['first_name'],                                 label: 'ISM',                     icon: '👤' },
+  { key: 'patronymic',         aliases: ['patronymic'],                                 label: 'OTASINING ISMI',          icon: '👤' },
+  { key: 'personal_number',    aliases: ['personal_number', 'jshshir', 'pinfl'],        label: 'JSHSHIR (PINFL)',         icon: '🔢' },
+  { key: 'document_number',    aliases: ['document_number', 'doc_num'],                 label: 'HUJJAT RAQAMI',           icon: '🪪' },
+  { key: 'date_of_birth',      aliases: ['date_of_birth', 'birth_date'],                label: "TUG'ILGAN SANA",          icon: '📅' },
+  { key: 'place_of_birth',     aliases: ['place_of_birth', 'birth_place'],               label: "TUG'ILGAN JOYI",          icon: '📍' },
+  { key: 'date_of_issue',      aliases: ['date_of_issue', 'issue_date'],                label: 'BERILGAN SANA',           icon: '📅' },
+  { key: 'date_of_expiry',     aliases: ['date_of_expiry', 'expiry_date'],              label: 'AMAL QILISH MUDDATI',     icon: '📅' },
+  { key: 'gender',             aliases: ['gender'],                                     label: 'JINSI',                   icon: '⚧' },
+  { key: 'nationality',        aliases: ['nationality'],                                label: 'FUQAROLIGI / MILLATI',    icon: '🌍' },
+  { key: 'issuing_authority',  aliases: ['issuing_authority'],                           label: 'KIM TOMONIDAN BERILGAN',  icon: '🏛' },
+];
+
+function normalizeCitizenFields(raw) {
+  if (!raw) return {};
+  const src = { ...raw };
+  const out = {};
+
+  for (const item of CANONICAL_CITIZEN_FIELDS) {
+    let val = '';
+    for (const alias of item.aliases) {
+      if (src[alias] && src[alias] !== 'null' && src[alias] !== 'None') {
+        val = String(src[alias]).trim();
+        break;
+      }
+    }
+    out[item.key] = val;
+  }
+
+  // 1. Auto-assemble full_name if missing or partial
+  if (!out.full_name) {
+    const parts = [out.surname, out.first_name, out.patronymic].filter(Boolean);
+    if (parts.length) {
+      out.full_name = parts.join(' ');
+    }
+  }
+
+  // 2. Derive Gender from Patronymic or PINFL if not present
+  if (!out.gender) {
+    if (out.personal_number && out.personal_number.length === 14) {
+      const fDig = out.personal_number[0];
+      if (['1', '3', '5'].includes(fDig)) out.gender = 'Erkak';
+      else if (['2', '4', '6'].includes(fDig)) out.gender = 'Ayol';
+    }
+    if (!out.gender && out.patronymic) {
+      const pUp = out.patronymic.toUpperCase();
+      if (/O['ʻʼ`]?G['ʻʼ`]?LI|VICH|OVICH|EVICH\b/.test(pUp)) out.gender = 'Erkak';
+      else if (/QIZI|VNA|OVNA|EVNA\b/.test(pUp)) out.gender = 'Ayol';
+    }
+  }
+
+  // 3. Derive Date of Birth from 14-digit PINFL if missing
+  if (!out.date_of_birth && out.personal_number && out.personal_number.length === 14) {
+    const p = out.personal_number;
+    const lead = p[0];
+    const centMap = { '1': 1800, '2': 1800, '3': 1900, '4': 1900, '5': 2000, '6': 2000 };
+    if (centMap[lead]) {
+      const dd = p.slice(1, 3);
+      const mm = p.slice(3, 5);
+      const yy = parseInt(p.slice(5, 7), 10);
+      const fullYear = centMap[lead] + yy;
+      out.date_of_birth = `${fullYear}-${mm}-${dd}`;
+    }
+  }
+
+  // 4. Default nationality for Uzbekistan documents
+  if (!out.nationality) {
+    out.nationality = "O'zbekiston";
+  }
+
+  return out;
+}
 
 function renderStructuredFields(fields) {
   const grid = document.getElementById('fieldsGrid');
+  if (!grid) return;
   grid.innerHTML = '';
 
-  const normalized = { ...fields };
-  if (normalized.personal_number && normalized.jshshir) delete normalized.jshshir;
-  if (normalized.date_of_birth && normalized.birth_date) delete normalized.birth_date;
-  if (normalized.place_of_birth && normalized.birth_place) delete normalized.birth_place;
-  if (normalized.date_of_issue && normalized.issue_date) delete normalized.issue_date;
-  if (normalized.date_of_expiry && normalized.expiry_date) delete normalized.expiry_date;
-
-  const keys = Object.keys(FIELD_LABELS);
+  const normalized = normalizeCitizenFields(fields);
   let foundCount = 0;
 
-  for (const key of keys) {
-    if (!(key in normalized)) continue;
-    const meta = FIELD_LABELS[key];
-    const val = normalized[key];
-    const hasVal = val && val !== 'null' && val !== null;
+  // Render exactly the 13 canonical fields in standard order (matching screenshot)
+  for (const meta of CANONICAL_CITIZEN_FIELDS) {
+    const val = normalized[meta.key];
+    const hasVal = val && val !== 'null' && val !== 'None' && String(val).trim() !== '';
     if (hasVal) foundCount++;
 
     const card = document.createElement('div');
     card.className = 'field-card' + (hasVal ? ' has-value' : '');
     card.innerHTML = `
       <div class="field-label">
-        ${meta.icon} ${meta.label}
-        ${hasVal ? `<button class="field-copy" onclick="copyValue('${escapeHtml(String(val))}', this)" title="Nusxa olish">📋</button>` : ''}
+        <span class="field-label-text">${meta.icon} ${meta.label}</span>
+        ${hasVal ? `<button type="button" class="field-copy" onclick="copyValue('${escapeHtml(String(val))}', this)" title="Nusxa olish">📋</button>` : ''}
       </div>
       <div class="field-value${hasVal ? '' : ' empty'}">${hasVal ? escapeHtml(String(val)) : '— topilmadi'}</div>
     `;
@@ -2231,22 +2284,7 @@ function getExtractedFields() {
   } else if (res.pages?.[0]?.ocr_result?.structured_fields) {
     raw = { ...res.pages[0].ocr_result.structured_fields };
   }
-
-  const out = {};
-  out.surname = raw.surname || '';
-  out.first_name = raw.first_name || '';
-  out.patronymic = raw.patronymic || '';
-  out.full_name = raw.full_name || [out.surname, out.first_name, out.patronymic].filter(Boolean).join(' ');
-  out.personal_number = raw.personal_number || raw.jshshir || '';
-  out.document_number = raw.document_number || '';
-  out.date_of_birth = raw.date_of_birth || raw.birth_date || '';
-  out.place_of_birth = raw.place_of_birth || raw.birth_place || '';
-  out.date_of_issue = raw.date_of_issue || raw.issue_date || '';
-  out.date_of_expiry = raw.date_of_expiry || raw.expiry_date || '';
-  out.gender = raw.gender || '';
-  out.nationality = raw.nationality || '';
-  out.issuing_authority = raw.issuing_authority || '';
-  return out;
+  return normalizeCitizenFields(raw);
 }
 
 async function copyAllStructuredFields() {

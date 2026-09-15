@@ -1,25 +1,80 @@
 /**
- * doc-camera.js — Guided Document Smart Auto-Capture (Real-Time HUD & Canny Edge Detection)
+ * doc-camera.js — Professional Document Camera HUD with Manual Shutter & Real-Time Alignment
  */
 'use strict';
 
 // ══════════════════════════════════════════════════════════════
-//  GUIDED DOCUMENT AUTO-CAPTURE ENGINE (REAL-TIME HUD)
+//  PROFESSIONAL DOCUMENT CAMERA HUD ENGINE
 // ══════════════════════════════════════════════════════════════
 let docFacingMode = 'environment'; // default rear camera
 
 function openDocCapture(targetZone, e) {
   if (e) e.stopPropagation();
-  state.docCaptureTarget = targetZone; // 'single' | 'front' | 'back'
+  state.docCaptureTarget = targetZone || 'single'; // 'single' | 'front' | 'back'
+  state.docCaptureMode = 'manual'; // Default to manual control per user requirements
+
   const modal = document.getElementById('docCaptureModal');
   if (modal) modal.style.display = 'flex';
+
+  // Set default manual mode in UI
+  setDocCaptureMode('manual');
+
+  // Register keyboard shortcuts (Space / Enter = capture, Escape = close)
+  window.removeEventListener('keydown', handleDocCamKeyDown);
+  window.addEventListener('keydown', handleDocCamKeyDown);
+
   startDocCamera();
 }
 
 function closeDocCapture() {
+  window.removeEventListener('keydown', handleDocCamKeyDown);
   stopDocCamera();
+
   const modal = document.getElementById('docCaptureModal');
   if (modal) modal.style.display = 'none';
+
+  // Reset shutter ready state
+  const shutterBtn = document.getElementById('btnDocManualShutter');
+  if (shutterBtn) shutterBtn.classList.remove('shutter-ready');
+}
+
+function setDocCaptureMode(mode) {
+  state.docCaptureMode = mode; // 'manual' | 'auto'
+  state.docStabilityCounter = 0;
+
+  const btnManual = document.getElementById('btnModeManual');
+  const btnAuto = document.getElementById('btnModeAuto');
+  const shutterLabel = document.getElementById('shutterLabel');
+  const shutterBtn = document.getElementById('btnDocManualShutter');
+
+  if (btnManual && btnAuto) {
+    if (mode === 'manual') {
+      btnManual.classList.add('active');
+      btnAuto.classList.remove('active');
+      if (shutterLabel) shutterLabel.textContent = "📸 Suratga olish";
+      if (shutterBtn) shutterBtn.title = "Suratga olish (Spacebar yoki Enter)";
+      updateDocHudStatus("Hujjatni ramkaga to'g'rilang va 📸 tugmasini bosing", false, 0);
+    } else {
+      btnAuto.classList.add('active');
+      btnManual.classList.remove('active');
+      if (shutterLabel) shutterLabel.textContent = "⚡ Avto-tutish faol";
+      if (shutterBtn) shutterBtn.title = "Qo'lda tushirish yoki kutish";
+      updateDocHudStatus("Hujjatni qimirlatmasdan ushlang (Avto)", false, 0);
+    }
+  }
+}
+
+function handleDocCamKeyDown(e) {
+  const modal = document.getElementById('docCaptureModal');
+  if (!modal || modal.style.display === 'none') return;
+
+  if (e.code === 'Space' || e.code === 'Enter') {
+    e.preventDefault();
+    triggerManualDocCapture();
+  } else if (e.code === 'Escape') {
+    e.preventDefault();
+    closeDocCapture();
+  }
 }
 
 function switchDocCameraFacing() {
@@ -31,7 +86,11 @@ async function startDocCamera() {
   const video = document.getElementById('docVideo');
   state.docStabilityCounter = 0;
   state.lastDocFrameData = null;
-  updateDocHudStatus("Kamera ulanmoqda...", false, 0);
+
+  const resBadge = document.getElementById('camResBadge');
+  if (resBadge) resBadge.textContent = "Ulanmoqda...";
+
+  updateDocHudStatus("Kamera ishga tushirilmoqda...", false, 0);
 
   try {
     if (state.docStream) {
@@ -52,7 +111,7 @@ async function startDocCamera() {
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch(err1) {
-      console.warn("Doc camera ideal constraints failed, trying basic {video: true}:", err1);
+      console.warn("Doc camera ideal constraints failed, trying basic fallback {video: true}:", err1);
       stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     }
 
@@ -62,13 +121,21 @@ async function startDocCamera() {
       video.playsInline = true;
       video.onloadeddata = async () => {
         try { await video.play(); } catch(e){}
-        updateDocHudStatus("Hujjatni ramkaga to'g'rilang", false, 0);
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+        if (resBadge) {
+          resBadge.textContent = `${vw}x${vh}` + (vw >= 1920 ? ' FHD' : vw >= 1280 ? ' HD' : '');
+        }
+        updateDocHudStatus(state.docCaptureMode === 'manual'
+          ? "Hujjatni ramkaga to'g'rilang va 📸 tugmasini bosing"
+          : "Hujjatni qimirlatmay ushlang (Avto)", false, 0);
         runDocFrameAnalysisLoop();
       };
       try { await video.play(); } catch(e){}
     }
   } catch(err) {
     console.error("Doc camera start failed:", err);
+    if (resBadge) resBadge.textContent = "Xatolik";
     updateDocHudStatus("Kameraga ulanib bo'lmadi", false, 0);
     showError("Kamera xatosi", "Kameradan foydalanish imkoni bo'lmadi: " + err.message);
   }
@@ -105,22 +172,41 @@ function updateDocHudStatus(text, isAligned, stabilityPct) {
   }
 }
 
+/**
+ * Realistic two-stage mechanical SLR camera shutter sound
+ */
 function playShutterSound() {
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(800, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.08);
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.09);
+    const t = ctx.currentTime;
+
+    // Stage 1: Mirror/Curtain release click
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'triangle';
+    osc1.frequency.setValueAtTime(1400, t);
+    osc1.frequency.exponentialRampToValueAtTime(320, t + 0.045);
+    gain1.gain.setValueAtTime(0.4, t);
+    gain1.gain.exponentialRampToValueAtTime(0.01, t + 0.045);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(t);
+    osc1.stop(t + 0.05);
+
+    // Stage 2: Shutter closure mechanical latch
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(500, t + 0.06);
+    osc2.frequency.exponentialRampToValueAtTime(120, t + 0.12);
+    gain2.gain.setValueAtTime(0.35, t + 0.06);
+    gain2.gain.exponentialRampToValueAtTime(0.01, t + 0.12);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(t + 0.06);
+    osc2.stop(t + 0.13);
   } catch(e) {}
 }
 
@@ -171,22 +257,40 @@ function runDocFrameAnalysisLoop() {
 
   const isDocPresent = contrast > 65 && avgLuma > 45 && avgLuma < 225;
   const isStable = frameDiff < 7.0;
+  const shutterBtn = document.getElementById('btnDocManualShutter');
 
   if (isDocPresent && isStable) {
     state.docStabilityCounter++;
-    const pct = Math.min(100, Math.round((state.docStabilityCounter / 8) * 100));
-    updateDocHudStatus("Barqaror... Rasm olinmoqda!", true, pct);
+    const maxThresh = state.docCaptureMode === 'auto' ? 18 : 8;
+    const pct = Math.min(100, Math.round((state.docStabilityCounter / maxThresh) * 100));
 
-    if (state.docStabilityCounter >= 8) {
-      triggerCapturedDocPhoto(video);
-      return;
+    if (shutterBtn) shutterBtn.classList.add('shutter-ready');
+
+    if (state.docCaptureMode === 'auto') {
+      const countdown = Math.max(1, Math.ceil((18 - state.docStabilityCounter) / 6));
+      updateDocHudStatus(`⚡ Barqaror! Rasm olinmoqda (${countdown})...`, true, pct);
+
+      if (state.docStabilityCounter >= 18) {
+        triggerCapturedDocPhoto(video);
+        return;
+      }
+    } else {
+      // MANUAL MODE (Default): Guide the user, NEVER take unwanted photos!
+      updateDocHudStatus("🟢 Hujjat to'g'ri joylashdi — 📸 Suratga oling!", true, pct);
     }
   } else if (isDocPresent) {
     state.docStabilityCounter = Math.max(0, state.docStabilityCounter - 1);
-    updateDocHudStatus("Qo'lingizni qimirlatmang...", true, Math.round((state.docStabilityCounter / 8) * 100));
+    const maxThresh = state.docCaptureMode === 'auto' ? 18 : 8;
+    const pct = Math.min(100, Math.round((state.docStabilityCounter / maxThresh) * 100));
+
+    if (shutterBtn) shutterBtn.classList.remove('shutter-ready');
+    updateDocHudStatus("🟡 Hujjatni qimirlatmay ushlang...", true, pct);
   } else {
     state.docStabilityCounter = 0;
-    updateDocHudStatus("Hujjatni ramkaga to'g'rilang", false, 0);
+    if (shutterBtn) shutterBtn.classList.remove('shutter-ready');
+    updateDocHudStatus(state.docCaptureMode === 'auto'
+      ? "Hujjatni ramkaga to'g'rilang (Avto)"
+      : "Hujjatni ramkaga to'g'rilang va 📸 tugmasini bosing", false, 0);
   }
 
   state.docAnimFrameId = requestAnimationFrame(runDocFrameAnalysisLoop);
@@ -194,40 +298,58 @@ function runDocFrameAnalysisLoop() {
 
 function triggerManualDocCapture() {
   const video = document.getElementById('docVideo');
-  if (video) triggerCapturedDocPhoto(video);
+  if (video && video.readyState >= 2) {
+    triggerCapturedDocPhoto(video);
+  }
 }
 
 function triggerCapturedDocPhoto(video) {
+  // 1. Shutter Flash Feedback
   const flash = document.getElementById('docCameraFlash');
   if (flash) {
     flash.classList.add('flash-active');
     setTimeout(() => flash.classList.remove('flash-active'), 250);
   }
+
+  // 2. Realistic Audio Feedback
   playShutterSound();
 
+  // 3. Mobile Tactile Haptic Vibration
+  try {
+    if (navigator.vibrate) navigator.vibrate([35, 25, 50]);
+  } catch(e) {}
+
+  // 4. Full Resolution Canvas Capture
   const capCanvas = document.createElement('canvas');
-  capCanvas.width = video.videoWidth || 1280;
-  capCanvas.height = video.videoHeight || 720;
+  const targetW = video.videoWidth || 1920;
+  const targetH = video.videoHeight || 1080;
+  capCanvas.width = targetW;
+  capCanvas.height = targetH;
+
   const ctx = capCanvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, capCanvas.width, capCanvas.height);
+  ctx.drawImage(video, 0, 0, targetW, targetH);
 
   capCanvas.toBlob((blob) => {
     if (!blob) return;
-    const filename = `autocapture_${state.docCaptureTarget}_${Date.now()}.jpg`;
+    const modePrefix = state.docCaptureMode === 'auto' ? 'auto' : 'manual';
+    const filename = `${modePrefix}_${state.docCaptureTarget}_${Date.now()}.jpg`;
     const capturedFile = new File([blob], filename, { type: 'image/jpeg' });
 
     closeDocCapture();
 
+    if (typeof showToast === 'function') {
+      showToast("📸 Hujjat surati olindi, tahlil qilinmoqda...", 'success', 2500);
+    }
+
     if (state.docCaptureTarget === 'single') {
       processFile(capturedFile);
-      log("Kameradan hujjat avtomatik olindi (Yagona rejim)", LEVELS.OK);
+      log("Hujjat kamerada suratga olindi (Yagona rejim)", LEVELS.OK);
     } else if (state.docCaptureTarget === 'front') {
       processDoubleSideFile(capturedFile, 'front');
-      log("Old tomon kameradan avtomatik olindi", LEVELS.OK);
+      log("Old tomon kamerada suratga olindi", LEVELS.OK);
     } else if (state.docCaptureTarget === 'back') {
       processDoubleSideFile(capturedFile, 'back');
-      log("Orqa tomon kameradan avtomatik olindi", LEVELS.OK);
+      log("Orqa tomon kamerada suratga olindi", LEVELS.OK);
     }
-  }, 'image/jpeg', 0.95);
+  }, 'image/jpeg', 0.98);
 }
-

@@ -2316,13 +2316,13 @@ body {
   border: 2px dashed rgba(255, 255, 255, 0.4);
   border-radius: 12px;
   pointer-events: none;
-  transition: border-color 0.3s ease;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
 }
 
 .doc-guide-frame.aligned {
   border-color: var(--accent);
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(0, 212, 170, 0.4);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 24px rgba(0, 212, 170, 0.45);
 }
 
 .guide-corner {
@@ -2354,6 +2354,20 @@ body {
   border-bottom-right-radius: 10px;
 }
 
+.guide-card-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.35);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
 .doc-scanner-laser {
   position: absolute;
   top: 0;
@@ -2372,10 +2386,69 @@ body {
   100% { top: 4%; }
 }
 
+/* Top Camera HUD: Mode Toggle & Resolution Badge */
+.doc-top-hud {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 15;
+  pointer-events: auto;
+}
+
+.doc-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(14, 15, 17, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 20px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.btn-mode-pill {
+  background: transparent;
+  border: none;
+  color: var(--text2);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-mode-pill:hover {
+  color: #fff;
+}
+
+.btn-mode-pill.active {
+  background: var(--accent);
+  color: #0e0f11;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(0, 212, 170, 0.4);
+}
+
+.cam-res-badge {
+  background: rgba(14, 15, 17, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: #94a3b8;
+  letter-spacing: 0.5px;
+}
+
 /* HUD Overlay */
 .doc-hud-overlay {
   position: absolute;
-  bottom: 80px;
+  bottom: 95px;
   left: 0;
   right: 0;
   display: flex;
@@ -2383,10 +2456,11 @@ body {
   align-items: center;
   gap: 8px;
   pointer-events: none;
+  z-index: 12;
 }
 
 .doc-hud-status {
-  background: rgba(14, 15, 17, 0.85);
+  background: rgba(14, 15, 17, 0.88);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   padding: 6px 16px;
@@ -2427,15 +2501,32 @@ body {
   transition: width 0.15s ease;
 }
 
+/* Camera Flash */
+.camera-flash {
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 25;
+  transition: opacity 0.25s ease-out;
+}
+
+.camera-flash.flash-active {
+  opacity: 0.95;
+  transition: opacity 0.05s ease-in;
+}
+
+/* Bottom Controls */
 .doc-cam-bottom-bar {
   position: absolute;
-  bottom: 16px;
+  bottom: 14px;
   left: 0;
   right: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 24px;
+  gap: 28px;
   z-index: 10;
 }
 
@@ -2456,35 +2547,91 @@ body {
 
 .btn-cam-circle:hover {
   background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+.shutter-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
 .btn-doc-shutter {
-  width: 58px;
-  height: 58px;
+  position: relative;
+  width: 66px;
+  height: 66px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 4px solid #fff;
-  font-size: 24px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 4px solid #ffffff;
+  padding: 4px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 16px rgba(0, 212, 170, 0.5);
-  transition: all 0.15s;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.shutter-inner-disc {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--accent);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  display: block;
 }
 
 .btn-doc-shutter:hover {
   transform: scale(1.06);
+  box-shadow: 0 0 20px rgba(0, 212, 170, 0.6);
 }
 
-.btn-doc-cancel {
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid var(--border);
-  color: var(--text2);
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
+.btn-doc-shutter:active {
+  transform: scale(0.92);
+}
+
+.btn-doc-shutter:active .shutter-inner-disc {
+  transform: scale(0.88);
+  background: #00f5c4;
+}
+
+.btn-doc-shutter.shutter-ready {
+  border-color: var(--accent);
+  animation: shutterPulse 1.4s infinite ease-in-out;
+}
+
+@keyframes shutterPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(0, 212, 170, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 212, 170, 0);
+  }
+}
+
+.shutter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+
+.btn-doc-cancel-circle {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f87171;
+}
+
+.btn-doc-cancel-circle:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fff;
 }
 
 /* ── Active Liveness Challenge HUD ───────────────────────────── */

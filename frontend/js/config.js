@@ -45,6 +45,7 @@ const state = {
   livenessSession: null,
   livenessFrames: [],
   docCaptureTarget: 'single', // 'single' | 'front' | 'back'
+  docCaptureMode: 'manual',   // 'manual' (default, 100% user control) | 'auto'
   docStream: null,
   docAnimFrameId: null,
   docStabilityCounter: 0,

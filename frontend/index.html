@@ -6,7 +6,7 @@
 <title>O'zbekiston Hujjat OCR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=1.3.3">
+<link rel="stylesheet" href="style.css?v=1.5.0">
 </head>
 <body>
   <!-- ── HEADER ────────────────────────────────────────── -->
@@ -75,8 +75,8 @@
       <section class="upload-section">
         <div class="upload-top-bar">
           <div class="section-label">Rasm yuklash</div>
-          <button type="button" class="btn-smart-cam" onclick="openDocCapture('single', event)" title="Kamerada avtomatik tutib olish">
-            📸 Smart Auto-Capture
+          <button type="button" class="btn-smart-cam" onclick="openDocCapture('single', event)" title="Hujjatni kamerada suratga olish">
+            📸 Kamera orqali olish
           </button>
         </div>
         <div class="upload-zone" id="uploadZone"
@@ -169,7 +169,7 @@
           <div class="side-col">
             <div class="side-header">
               <span class="side-title">1. Old Tomoni (Front Side)</span>
-              <button type="button" class="btn-side-cam" onclick="openDocCapture('front', event)" title="Old tomonni kamerada suratga olish">📸 Auto-Capture</button>
+              <button type="button" class="btn-side-cam" onclick="openDocCapture('front', event)" title="Old tomonni kamerada suratga olish">📸 Kamera</button>
             </div>
             <div class="upload-zone side-zone" id="uploadZoneFront"
                  ondrop="handleDoubleDrop(event, 'front')" ondragover="handleDoubleDragOver(event, 'front')"
@@ -192,7 +192,7 @@
           <div class="side-col">
             <div class="side-header">
               <span class="side-title">2. Orqa Tomoni (Back Side)</span>
-              <button type="button" class="btn-side-cam" onclick="openDocCapture('back', event)" title="Orqa tomonni kamerada suratga olish">📸 Auto-Capture</button>
+              <button type="button" class="btn-side-cam" onclick="openDocCapture('back', event)" title="Orqa tomonni kamerada suratga olish">📸 Kamera</button>
             </div>
             <div class="upload-zone side-zone" id="uploadZoneBack"
                  ondrop="handleDoubleDrop(event, 'back')" ondragover="handleDoubleDragOver(event, 'back')"
@@ -621,15 +621,28 @@
     <div class="modal-box doc-capture-box" onclick="event.stopPropagation()">
       <div class="kyc-modal-header">
         <div>
-          <div class="modal-title">📸 Hujjatni Avtomatik Tutib Olish (Guided Auto-Capture)</div>
-          <p class="modal-desc">ID kartangiz yoki pasportingizni ekrandagi ramka ichiga joylashtiring. Qo'lingiz qimirlamasdan turganda rasm avtomatik olinadi.</p>
+          <div class="modal-title">📸 Hujjatni Suratga Olish (Professional Kamera)</div>
+          <p class="modal-desc">ID-karta yoki pasportingizni ekrandagi ramka ichiga to'g'rilang va markazdagi 📸 suratga olish tugmasini bosing.</p>
         </div>
-        <button class="modal-close-btn" onclick="closeDocCapture()" title="Yopish">✕</button>
+        <button class="modal-close-btn" onclick="closeDocCapture()" title="Yopish (Esc)">✕</button>
       </div>
 
       <div class="doc-camera-viewport" id="docCameraViewport">
         <video id="docVideo" autoplay playsinline muted></video>
         <canvas id="docAnalyzeCanvas" style="display:none"></canvas>
+
+        <!-- Top Camera Badges & Mode Switch -->
+        <div class="doc-top-hud">
+          <div class="doc-mode-toggle" role="group" aria-label="Suratga olish rejimi">
+            <button type="button" class="btn-mode-pill active" id="btnModeManual" onclick="setDocCaptureMode('manual')" title="Qo'lda boshqarish (Tavsiya)">
+              📷 Qo'lda
+            </button>
+            <button type="button" class="btn-mode-pill" id="btnModeAuto" onclick="setDocCaptureMode('auto')" title="Avtomatik tutish (Barqaror turganda)">
+              ⚡ Avto
+            </button>
+          </div>
+          <span class="cam-res-badge" id="camResBadge">Kamera...</span>
+        </div>
 
         <!-- ID-1 Guide Frame -->
         <div class="doc-guide-frame" id="docGuideFrame">
@@ -638,13 +651,14 @@
           <div class="guide-corner bottom-left"></div>
           <div class="guide-corner bottom-right"></div>
           <div class="doc-scanner-laser" id="docScannerLaser"></div>
+          <div class="guide-card-icon">🪪 ID / Pasport ramkasi</div>
         </div>
 
-        <!-- Real-Time Auto-Capture HUD -->
+        <!-- Real-Time Camera HUD -->
         <div class="doc-hud-overlay">
           <div class="doc-hud-status" id="docHudStatus">
             <span class="hud-status-dot" id="hudStatusDot"></span>
-            <span id="docHudText">Hujjatni ramkaga to'g'rilang</span>
+            <span id="docHudText">Hujjatni ramkaga to'g'rilang va 📸 tugmasini bosing</span>
           </div>
 
           <!-- Stability Progress Meter -->
@@ -661,11 +675,16 @@
           <button type="button" class="btn-cam-circle" id="btnSwitchDocCam" onclick="switchDocCameraFacing()" title="Kamerani almashtirish (Old/Orqa)">
             🔄
           </button>
-          <button type="button" class="btn-doc-shutter" id="btnDocManualShutter" onclick="triggerManualDocCapture()" title="Qo'lda tushirish">
-            📸
-          </button>
-          <button type="button" class="btn-doc-cancel" onclick="closeDocCapture()">
-            Bekor qilish
+          
+          <div class="shutter-wrapper">
+            <button type="button" class="btn-doc-shutter" id="btnDocManualShutter" onclick="triggerManualDocCapture()" title="Suratga olish (Spacebar yoki Enter)">
+              <span class="shutter-inner-disc"></span>
+            </button>
+            <div class="shutter-label" id="shutterLabel">📸 Suratga olish</div>
+          </div>
+
+          <button type="button" class="btn-cam-circle btn-doc-cancel-circle" onclick="closeDocCapture()" title="Yopish / Bekor qilish (Esc)">
+            ✕
           </button>
         </div>
       </div>
@@ -682,7 +701,7 @@
   <script src="js/copy-actions.js?v=1.4.0"></script>
   <script src="js/api.js?v=1.4.0"></script>
   <script src="js/file-handlers.js?v=1.4.0"></script>
-  <script src="js/doc-camera.js?v=1.4.0"></script>
+  <script src="js/doc-camera.js?v=1.5.0"></script>
   <script src="js/kyc-modal.js?v=1.4.0"></script>
   <script src="js/liveness.js?v=1.4.0"></script>
   <script src="js/main.js?v=1.4.0"></script>
